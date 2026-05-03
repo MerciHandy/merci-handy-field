@@ -1,0 +1,21 @@
+# Streamlit secrets (NE JAMAIS PUSH)
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Service account JSON (NE JAMAIS PUSH)
+*.json
+service_account*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
