@@ -1,7 +1,6 @@
 """
-Merci Handy — Field Sales App (v2)
-Outil de suivi terrain pour les commerciaux.
-Backend : Google Sheets + Google Drive
+Merci Handy — Field Sales App (v2.1)
+Optimisé : moins d'appels API + lisibilité corrigée
 """
 
 import streamlit as st
@@ -25,15 +24,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Couleurs Merci Handy (rose)
 PRIMARY = "#EDADE7"
 PRIMARY_DARK = "#D88FCE"
 TEXT_DARK = "#2C2C2A"
-TEXT_LIGHT = "#FFFFFF"
 BG_LIGHT = "#FFFFFF"
 BG_SOFT = "#FDF5FB"
 
-# Listes par défaut (utilisées seulement si la config Sheet est vide)
 DEFAULT_ENSEIGNES = ["Monoprix", "Sephora", "Nocibé", "Marionnaud", "Carrefour", "Pharmacie", "Autre"]
 DEFAULT_PROJETS = [
     "Implantation permanente",
@@ -51,30 +47,34 @@ DEFAULT_ETATS = [
     "🎨 PLV manquante"
 ]
 
-# Colonnes de la Sheet "Visites"
 SHEET_COLUMNS = [
     "ID", "Date", "Heure", "Commercial", "Enseigne", "Magasin",
     "Ville", "Projet", "Etat", "Commentaire", "Photos_URLs"
 ]
 
-# Mot de passe admin (par défaut, peut être surchargé via secrets)
 DEFAULT_ADMIN_PASSWORD = "mercihandy2026"
 
 # =========================================================================
-# STYLE — thème clair lisible
+# STYLE - thème clair avec lisibilité forcée partout
 # =========================================================================
 
 st.markdown(f"""
 <style>
-    /* Force light theme & lisibilité */
+    /* Base */
     .stApp {{
         background-color: {BG_SOFT};
         color: {TEXT_DARK};
     }}
 
-    /* Tous les inputs : fond blanc, texte foncé */
-    .stTextInput input,
-    .stTextArea textarea,
+    /* TOUT le texte en foncé */
+    .stApp, .stApp p, .stApp span, .stApp div, .stApp label,
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+    .stApp li, .stApp strong, .stApp em {{
+        color: {TEXT_DARK} !important;
+    }}
+
+    /* Inputs */
+    .stTextInput input, .stTextArea textarea,
     .stSelectbox [data-baseweb="select"] > div,
     .stMultiSelect [data-baseweb="select"] > div,
     div[data-baseweb="input"] input,
@@ -84,44 +84,47 @@ st.markdown(f"""
         border: 1px solid #DDD !important;
     }}
 
-    /* Labels lisibles */
-    .stTextInput label,
-    .stTextArea label,
-    .stSelectbox label,
-    .stMultiSelect label,
-    .stCheckbox label,
-    .stFileUploader label,
-    .stRadio label,
-    label {{
+    /* Labels */
+    label, .stTextInput label, .stTextArea label, .stSelectbox label,
+    .stMultiSelect label, .stCheckbox label, .stFileUploader label,
+    .stRadio label {{
         color: {TEXT_DARK} !important;
         font-weight: 500 !important;
     }}
 
-    /* Checkboxes */
-    .stCheckbox > label > div[data-testid="stMarkdownContainer"] p {{
-        color: {TEXT_DARK} !important;
-    }}
+    /* CHECKBOXES — fix lisibilité */
+    .stCheckbox label {{ color: {TEXT_DARK} !important; }}
+    .stCheckbox label p {{ color: {TEXT_DARK} !important; }}
+    .stCheckbox label span {{ color: {TEXT_DARK} !important; }}
+    .stCheckbox > label > div {{ color: {TEXT_DARK} !important; }}
+    .stCheckbox > label > div * {{ color: {TEXT_DARK} !important; }}
+    [data-testid="stCheckbox"] label {{ color: {TEXT_DARK} !important; }}
+    [data-testid="stCheckbox"] label * {{ color: {TEXT_DARK} !important; }}
+    [data-testid="stCheckbox"] p {{ color: {TEXT_DARK} !important; }}
 
-    /* Markdown text */
-    .stMarkdown, .stMarkdown p, .stMarkdown li {{
-        color: {TEXT_DARK} !important;
-    }}
+    /* RADIO — fix lisibilité */
+    .stRadio label {{ color: {TEXT_DARK} !important; }}
+    .stRadio label p {{ color: {TEXT_DARK} !important; }}
+    [data-testid="stRadio"] label * {{ color: {TEXT_DARK} !important; }}
+
+    /* Markdown */
+    .stMarkdown, .stMarkdown * {{ color: {TEXT_DARK} !important; }}
 
     /* File uploader */
-    [data-testid="stFileUploader"] {{
-        background-color: {BG_LIGHT};
-        border-radius: 8px;
-        padding: 8px;
-    }}
+    [data-testid="stFileUploader"] {{ background-color: {BG_LIGHT}; border-radius: 8px; padding: 8px; }}
+    [data-testid="stFileUploader"] * {{ color: {TEXT_DARK} !important; }}
     [data-testid="stFileUploader"] section {{
         background-color: {BG_LIGHT} !important;
         border: 2px dashed #DDD !important;
     }}
+    [data-testid="stFileUploader"] button {{
+        background: {PRIMARY} !important;
+        color: {TEXT_DARK} !important;
+    }}
 
-    /* Header stylé */
+    /* Header */
     .main-header {{
         background: linear-gradient(135deg, {PRIMARY} 0%, {PRIMARY_DARK} 100%);
-        color: {TEXT_DARK};
         padding: 20px 24px;
         border-radius: 16px;
         margin-bottom: 20px;
@@ -149,17 +152,10 @@ st.markdown(f"""
         border: 1px solid #EEE;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     }}
-    .stat-number {{
-        font-size: 28px;
-        font-weight: 700;
-        color: {PRIMARY_DARK};
-    }}
+    .stat-number {{ font-size: 28px; font-weight: 700; color: {PRIMARY_DARK} !important; }}
     .stat-label {{
-        font-size: 11px;
-        color: #666;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        font-weight: 500;
+        font-size: 11px; color: #666 !important; text-transform: uppercase;
+        letter-spacing: 0.5px; font-weight: 500;
     }}
 
     /* Form */
@@ -170,32 +166,17 @@ st.markdown(f"""
         border: 1px solid #EEE;
     }}
 
-    /* Boutons primaires */
-    .stButton > button[kind="primary"],
-    .stButton > button {{
-        background: {PRIMARY};
-        color: {TEXT_DARK};
-        border: none;
-        font-weight: 600;
-        border-radius: 8px;
-        transition: all 0.2s;
-    }}
-    .stButton > button:hover {{
-        background: {PRIMARY_DARK};
-        color: {TEXT_DARK};
-        transform: translateY(-1px);
-    }}
-    .stButton > button[kind="secondary"] {{
-        background: {BG_LIGHT};
-        color: {TEXT_DARK};
-        border: 1px solid #DDD;
-    }}
-
-    /* Form submit */
-    .stFormSubmitButton > button {{
+    /* Boutons */
+    .stButton > button, .stFormSubmitButton > button {{
         background: {PRIMARY} !important;
         color: {TEXT_DARK} !important;
+        border: none !important;
         font-weight: 600 !important;
+        border-radius: 8px !important;
+    }}
+    .stButton > button:hover, .stFormSubmitButton > button:hover {{
+        background: {PRIMARY_DARK} !important;
+        color: {TEXT_DARK} !important;
     }}
 
     /* Visit cards */
@@ -205,41 +186,31 @@ st.markdown(f"""
         padding: 14px 16px;
         margin-bottom: 8px;
         border: 1px solid #EEE;
-        color: {TEXT_DARK};
     }}
-    .visit-card strong, .visit-card span, .visit-card div {{
-        color: {TEXT_DARK} !important;
-    }}
-
-    /* Tableaux */
-    .stDataFrame {{
-        background: {BG_LIGHT};
-    }}
+    .visit-card * {{ color: {TEXT_DARK} !important; }}
 
     /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 4px;
-    }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 4px; }}
     .stTabs [data-baseweb="tab"] {{
         background: {BG_LIGHT};
         border-radius: 8px 8px 0 0;
-        color: {TEXT_DARK};
+        color: {TEXT_DARK} !important;
     }}
     .stTabs [aria-selected="true"] {{
         background: {PRIMARY} !important;
         color: {TEXT_DARK} !important;
     }}
 
-    /* Alertes */
-    .stAlert {{
-        background: {BG_LIGHT};
-        color: {TEXT_DARK};
-    }}
+    /* Alerts */
+    .stAlert, .stAlert * {{ color: {TEXT_DARK} !important; }}
+
+    /* Dataframe */
+    .stDataFrame {{ background: {BG_LIGHT}; }}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================================
-# CONNEXIONS GOOGLE
+# CONNEXIONS GOOGLE - optimisées
 # =========================================================================
 
 @st.cache_resource
@@ -258,76 +229,81 @@ def get_google_clients():
         return gc, drive
     except Exception as e:
         st.error(f"Erreur de connexion Google : {e}")
-        st.info("Vérifie que les secrets sont bien configurés dans Streamlit Cloud (voir README).")
         st.stop()
 
 
+@st.cache_resource
 def get_workbook():
-    """Ouvre le classeur Google Sheets complet."""
+    """Cache le workbook au niveau ressource (1 seul appel par session)."""
     gc, _ = get_google_clients()
     sheet_id = st.secrets["sheet_id"]
     return gc.open_by_key(sheet_id)
 
 
+@st.cache_resource
 def get_visits_sheet():
-    """Onglet principal des visites."""
+    """Cache l'onglet visites."""
     wb = get_workbook()
     sheet = wb.sheet1
-    if not sheet.row_values(1):
-        sheet.append_row(SHEET_COLUMNS)
+    try:
+        if not sheet.row_values(1):
+            sheet.append_row(SHEET_COLUMNS)
+    except Exception:
+        pass
     return sheet
 
 
-def get_or_create_config_sheet(name, default_values):
-    """
-    Récupère ou crée un onglet de config (Enseignes, Projets, Etats).
-    Chaque onglet a une seule colonne 'Valeur'.
-    """
+@st.cache_resource
+def get_config_sheet(name):
+    """Cache un onglet de config (créé si absent)."""
     wb = get_workbook()
     try:
         ws = wb.worksheet(name)
     except gspread.exceptions.WorksheetNotFound:
         ws = wb.add_worksheet(title=name, rows=100, cols=2)
         ws.append_row(["Valeur"])
-        for v in default_values:
-            ws.append_row([v])
-    # Si l'onglet est vide, on initialise avec les défauts
-    values = ws.col_values(1)
-    if len(values) <= 1:
-        for v in default_values:
-            ws.append_row([v])
     return ws
 
 
-@st.cache_data(ttl=30)
-def load_config_list(name, default_values):
-    """Charge la liste de configuration (Enseignes/Projets/Etats)."""
-    ws = get_or_create_config_sheet(name, default_values)
+def init_config_if_empty(name, default_values):
+    """Initialise un onglet de config avec les valeurs par défaut s'il est vide."""
+    ws = get_config_sheet(name)
     values = ws.col_values(1)
-    # Skip header
-    return [v for v in values[1:] if v.strip()]
+    if len(values) <= 1:
+        # Batch insert pour limiter les appels API
+        rows = [[v] for v in default_values]
+        ws.append_rows(rows)
+    return ws
+
+
+@st.cache_data(ttl=300)
+def load_config_list(name, default_values_tuple):
+    """Charge une liste de config (cache 5min). default_values_tuple pour cache hashable."""
+    default_values = list(default_values_tuple)
+    ws = init_config_if_empty(name, default_values)
+    values = ws.col_values(1)
+    result = [v for v in values[1:] if v.strip()]
+    # Si toujours vide après init, retourner les défauts
+    return result if result else default_values
 
 
 def add_to_config(name, value, default_values):
-    """Ajoute une valeur dans une liste de config."""
-    ws = get_or_create_config_sheet(name, default_values)
+    ws = get_config_sheet(name)
     ws.append_row([value])
     st.cache_data.clear()
 
 
 def remove_from_config(name, value, default_values):
-    """Supprime une valeur d'une liste de config."""
-    ws = get_or_create_config_sheet(name, default_values)
+    ws = get_config_sheet(name)
     values = ws.col_values(1)
     for i, v in enumerate(values):
-        if v == value and i != 0:  # Ne pas supprimer le header
+        if v == value and i != 0:
             ws.delete_rows(i + 1)
             break
     st.cache_data.clear()
 
 
 def upload_photo(photo_file, filename):
-    """Upload une photo sur Google Drive."""
     _, drive = get_google_clients()
     folder_id = st.secrets["drive_folder_id"]
 
@@ -350,9 +326,9 @@ def upload_photo(photo_file, filename):
     return file["webViewLink"]
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def load_visits():
-    """Charge l'historique."""
+    """Cache 1 minute pour les visites."""
     sheet = get_visits_sheet()
     data = sheet.get_all_records()
     if not data:
@@ -361,27 +337,18 @@ def load_visits():
 
 
 def save_visit(visit_data, photo_urls):
-    """Enregistre une nouvelle visite."""
     sheet = get_visits_sheet()
     row = [
-        visit_data["id"],
-        visit_data["date"],
-        visit_data["heure"],
-        visit_data["commercial"],
-        visit_data["enseigne"],
-        visit_data["magasin"],
-        visit_data["ville"],
-        visit_data["projet"],
-        ", ".join(visit_data["etat"]),
-        visit_data["commentaire"],
-        " | ".join(photo_urls)
+        visit_data["id"], visit_data["date"], visit_data["heure"],
+        visit_data["commercial"], visit_data["enseigne"], visit_data["magasin"],
+        visit_data["ville"], visit_data["projet"], ", ".join(visit_data["etat"]),
+        visit_data["commentaire"], " | ".join(photo_urls)
     ]
     sheet.append_row(row)
     st.cache_data.clear()
 
 
 def get_admin_password():
-    """Récupère le mot de passe admin depuis les secrets, ou défaut."""
     try:
         return st.secrets.get("admin_password", DEFAULT_ADMIN_PASSWORD)
     except Exception:
@@ -411,7 +378,6 @@ def screen_home():
 
     st.markdown(f'<div class="main-header"><h1>Salut {st.session_state.commercial} 👋</h1><p>Mes visites terrain</p></div>', unsafe_allow_html=True)
 
-    # Stats
     col1, col2, col3 = st.columns(3)
     today = datetime.now().strftime("%Y-%m-%d")
     visits_today = len(df_user[df_user["Date"] == today]) if not df_user.empty else 0
@@ -447,8 +413,8 @@ def screen_home():
             <div class="visit-card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div>
-                        <strong>{row["Magasin"]}</strong> · <span style="color:#888;">{row["Enseigne"]}</span><br>
-                        <span style="font-size:12px; color:#666;">{row["Date"]} · {row["Projet"]}</span>
+                        <strong>{row["Magasin"]}</strong> · <span style="color:#888 !important;">{row["Enseigne"]}</span><br>
+                        <span style="font-size:12px; color:#666 !important;">{row["Date"]} · {row["Projet"]}</span>
                     </div>
                     <div style="font-size:20px;">{etat_emoji}</div>
                 </div>
@@ -487,9 +453,9 @@ def screen_new_visit():
         st.session_state.screen = "home"
         st.rerun()
 
-    enseignes = load_config_list("Enseignes", DEFAULT_ENSEIGNES)
-    projets = load_config_list("Projets", DEFAULT_PROJETS)
-    etats = load_config_list("Etats", DEFAULT_ETATS)
+    enseignes = load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES))
+    projets = load_config_list("Projets", tuple(DEFAULT_PROJETS))
+    etats = load_config_list("Etats", tuple(DEFAULT_ETATS))
 
     with st.form("new_visit_form", clear_on_submit=True):
         enseigne = st.selectbox("Enseigne *", enseignes)
@@ -559,7 +525,6 @@ def screen_new_visit():
 
 
 def screen_history():
-    """Historique complet des visites du commercial connecté."""
     st.markdown(f'<div class="main-header"><h1>📜 Mon historique</h1><p>Toutes mes visites — {st.session_state.commercial}</p></div>', unsafe_allow_html=True)
 
     if st.button("← Retour"):
@@ -576,7 +541,6 @@ def screen_history():
         st.info("Tu n'as pas encore de visite enregistrée.")
         return
 
-    # Filtres
     st.markdown("### 🔎 Filtres")
     col1, col2 = st.columns(2)
     with col1:
@@ -586,7 +550,6 @@ def screen_history():
 
     search = st.text_input("🔍 Rechercher (magasin, ville, commentaire…)", placeholder="Ex : Haussmann")
 
-    # Application filtres
     df_filtered = df_user.copy()
     if filter_enseigne:
         df_filtered = df_filtered[df_filtered["Enseigne"].isin(filter_enseigne)]
@@ -602,33 +565,30 @@ def screen_history():
         df_filtered = df_filtered[mask]
 
     df_filtered = df_filtered.sort_values(by=["Date", "Heure"], ascending=False)
-
     st.markdown(f"### {len(df_filtered)} visite(s)")
 
     if df_filtered.empty:
         st.info("Aucune visite ne correspond à ces filtres.")
         return
 
-    # Affichage en cards détaillées
     for _, row in df_filtered.iterrows():
-        etat_emoji = row["Etat"].split()[0] if row["Etat"] else "📍"
         photos_section = ""
         if row.get("Photos_URLs"):
             urls = [u.strip() for u in str(row["Photos_URLs"]).split("|") if u.strip()]
             if urls:
-                links = " · ".join([f'<a href="{u}" target="_blank" style="color:{PRIMARY_DARK};">📷 Photo {i+1}</a>' for i, u in enumerate(urls)])
+                links = " · ".join([f'<a href="{u}" target="_blank" style="color:{PRIMARY_DARK} !important;">📷 Photo {i+1}</a>' for i, u in enumerate(urls)])
                 photos_section = f'<div style="margin-top:8px; font-size:12px;">{links}</div>'
 
         commentaire_section = ""
         if row.get("Commentaire"):
-            commentaire_section = f'<div style="margin-top:6px; font-size:12px; color:#666; font-style:italic;">💬 {row["Commentaire"]}</div>'
+            commentaire_section = f'<div style="margin-top:6px; font-size:12px; color:#666 !important; font-style:italic;">💬 {row["Commentaire"]}</div>'
 
         st.markdown(f"""
         <div class="visit-card">
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                 <div style="flex:1;">
-                    <strong>{row["Magasin"]}</strong> · <span style="color:#888;">{row["Enseigne"]} — {row["Ville"]}</span><br>
-                    <span style="font-size:12px; color:#666;">{row["Date"]} {row["Heure"]} · {row["Projet"]}</span>
+                    <strong>{row["Magasin"]}</strong> · <span style="color:#888 !important;">{row["Enseigne"]} — {row["Ville"]}</span><br>
+                    <span style="font-size:12px; color:#666 !important;">{row["Date"]} {row["Heure"]} · {row["Projet"]}</span>
                     <div style="margin-top:6px; font-size:13px;">{row["Etat"]}</div>
                     {commentaire_section}
                     {photos_section}
@@ -650,7 +610,6 @@ def screen_dashboard():
         st.info("Aucune visite enregistrée pour l'instant.")
         return
 
-    # KPIs
     col1, col2, col3, col4 = st.columns(4)
     total = len(df)
     ruptures = df["Etat"].str.contains("Rupture", na=False).sum()
@@ -706,7 +665,6 @@ def screen_dashboard():
 
 
 def screen_admin_login():
-    """Écran de login admin protégé par mot de passe."""
     st.markdown('<div class="main-header"><h1>🔐 Espace admin</h1><p>Accès restreint</p></div>', unsafe_allow_html=True)
 
     if st.button("← Retour"):
@@ -725,7 +683,6 @@ def screen_admin_login():
 
 
 def screen_admin():
-    """Page admin pour gérer les listes."""
     st.markdown('<div class="main-header"><h1>⚙️ Admin — Configuration</h1><p>Gère les listes utilisées dans le formulaire</p></div>', unsafe_allow_html=True)
 
     col_back, col_logout = st.columns(2)
@@ -752,15 +709,13 @@ def screen_admin():
 
 
 def manage_list(name, defaults, with_emoji_hint=False):
-    """Composant générique pour gérer une liste de config."""
-    items = load_config_list(name, defaults)
+    items = load_config_list(name, tuple(defaults))
 
     st.markdown(f"### {len(items)} valeur(s) actives")
 
     if with_emoji_hint:
-        st.caption("💡 Astuce : tu peux ajouter un emoji au début pour la lisibilité (ex : `🆕 Nouveau lancement été 2026`)")
+        st.caption("💡 Astuce : tu peux ajouter un emoji au début pour la lisibilité")
 
-    # Liste des valeurs avec bouton supprimer
     for item in items:
         col_v, col_b = st.columns([5, 1])
         with col_v:
