@@ -1,6 +1,6 @@
 """
-Merci Handy — Field Sales App (v2.1)
-Optimisé : moins d'appels API + lisibilité corrigée
+Merci Handy — Field Sales App (v3)
+Géolocalisation GPS + détection magasin via OpenStreetMap (100% gratuit)
 """
 
 import streamlit as st
@@ -12,6 +12,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import io
 import uuid
+import requests
+from streamlit_geolocation import streamlit_geolocation
 
 # =========================================================================
 # CONFIGURATION
@@ -47,183 +49,201 @@ DEFAULT_ETATS = [
     "🎨 PLV manquante"
 ]
 
+# Colonnes de la Sheet (avec geoloc)
 SHEET_COLUMNS = [
     "ID", "Date", "Heure", "Commercial", "Enseigne", "Magasin",
-    "Ville", "Projet", "Etat", "Commentaire", "Photos_URLs"
+    "Ville", "Projet", "Etat", "Commentaire", "Photos_URLs",
+    "Latitude", "Longitude", "Adresse_complete"
 ]
 
 DEFAULT_ADMIN_PASSWORD = "mercihandy2026"
 
 # =========================================================================
-# STYLE - thème clair avec lisibilité forcée partout
+# STYLE
 # =========================================================================
 
 st.markdown(f"""
 <style>
-    /* Base */
-    .stApp {{
-        background-color: {BG_SOFT};
-        color: {TEXT_DARK};
-    }}
-
-    /* TOUT le texte en foncé */
+    .stApp {{ background-color: {BG_SOFT}; color: {TEXT_DARK}; }}
     .stApp, .stApp p, .stApp span, .stApp div, .stApp label,
     .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
-    .stApp li, .stApp strong, .stApp em {{
-        color: {TEXT_DARK} !important;
-    }}
+    .stApp li, .stApp strong, .stApp em {{ color: {TEXT_DARK} !important; }}
 
-    /* Inputs */
     .stTextInput input, .stTextArea textarea,
     .stSelectbox [data-baseweb="select"] > div,
     .stMultiSelect [data-baseweb="select"] > div,
-    div[data-baseweb="input"] input,
-    .stDateInput input {{
+    div[data-baseweb="input"] input, .stDateInput input {{
         background-color: {BG_LIGHT} !important;
         color: {TEXT_DARK} !important;
         border: 1px solid #DDD !important;
     }}
 
-    /* Labels */
     label, .stTextInput label, .stTextArea label, .stSelectbox label,
-    .stMultiSelect label, .stCheckbox label, .stFileUploader label,
-    .stRadio label {{
+    .stMultiSelect label, .stCheckbox label, .stFileUploader label, .stRadio label {{
         color: {TEXT_DARK} !important;
         font-weight: 500 !important;
     }}
 
-    /* CHECKBOXES — fix lisibilité */
-    .stCheckbox label {{ color: {TEXT_DARK} !important; }}
-    .stCheckbox label p {{ color: {TEXT_DARK} !important; }}
-    .stCheckbox label span {{ color: {TEXT_DARK} !important; }}
-    .stCheckbox > label > div {{ color: {TEXT_DARK} !important; }}
-    .stCheckbox > label > div * {{ color: {TEXT_DARK} !important; }}
-    [data-testid="stCheckbox"] label {{ color: {TEXT_DARK} !important; }}
-    [data-testid="stCheckbox"] label * {{ color: {TEXT_DARK} !important; }}
+    .stCheckbox label, .stCheckbox label p, .stCheckbox label span,
+    .stCheckbox > label > div, .stCheckbox > label > div *,
+    [data-testid="stCheckbox"] label, [data-testid="stCheckbox"] label *,
     [data-testid="stCheckbox"] p {{ color: {TEXT_DARK} !important; }}
 
-    /* RADIO — fix lisibilité */
-    .stRadio label {{ color: {TEXT_DARK} !important; }}
-    .stRadio label p {{ color: {TEXT_DARK} !important; }}
+    .stRadio label, .stRadio label p,
     [data-testid="stRadio"] label * {{ color: {TEXT_DARK} !important; }}
 
-    /* Markdown */
     .stMarkdown, .stMarkdown * {{ color: {TEXT_DARK} !important; }}
 
-    /* File uploader */
     [data-testid="stFileUploader"] {{ background-color: {BG_LIGHT}; border-radius: 8px; padding: 8px; }}
     [data-testid="stFileUploader"] * {{ color: {TEXT_DARK} !important; }}
     [data-testid="stFileUploader"] section {{
         background-color: {BG_LIGHT} !important;
         border: 2px dashed #DDD !important;
     }}
-    [data-testid="stFileUploader"] button {{
-        background: {PRIMARY} !important;
-        color: {TEXT_DARK} !important;
-    }}
+    [data-testid="stFileUploader"] button {{ background: {PRIMARY} !important; color: {TEXT_DARK} !important; }}
 
-    /* Header */
     .main-header {{
         background: linear-gradient(135deg, {PRIMARY} 0%, {PRIMARY_DARK} 100%);
-        padding: 20px 24px;
-        border-radius: 16px;
-        margin-bottom: 20px;
+        padding: 20px 24px; border-radius: 16px; margin-bottom: 20px;
         box-shadow: 0 2px 12px rgba(237, 173, 231, 0.3);
     }}
-    .main-header h1 {{
-        color: {TEXT_DARK} !important;
-        margin: 0 !important;
-        font-size: 22px !important;
-        font-weight: 600 !important;
-    }}
-    .main-header p {{
-        color: {TEXT_DARK} !important;
-        margin: 4px 0 0 0 !important;
-        font-size: 13px !important;
-        opacity: 0.85;
-    }}
+    .main-header h1 {{ color: {TEXT_DARK} !important; margin: 0 !important; font-size: 22px !important; font-weight: 600 !important; }}
+    .main-header p {{ color: {TEXT_DARK} !important; margin: 4px 0 0 0 !important; font-size: 13px !important; opacity: 0.85; }}
 
-    /* Stat cards */
     .stat-card {{
-        background: {BG_LIGHT};
-        border-radius: 12px;
-        padding: 16px;
-        text-align: center;
-        border: 1px solid #EEE;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        background: {BG_LIGHT}; border-radius: 12px; padding: 16px; text-align: center;
+        border: 1px solid #EEE; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     }}
     .stat-number {{ font-size: 28px; font-weight: 700; color: {PRIMARY_DARK} !important; }}
-    .stat-label {{
-        font-size: 11px; color: #666 !important; text-transform: uppercase;
-        letter-spacing: 0.5px; font-weight: 500;
-    }}
+    .stat-label {{ font-size: 11px; color: #666 !important; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }}
 
-    /* Form */
     div[data-testid="stForm"] {{
-        background: {BG_LIGHT};
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #EEE;
+        background: {BG_LIGHT}; padding: 20px; border-radius: 12px; border: 1px solid #EEE;
     }}
 
-    /* Boutons */
     .stButton > button, .stFormSubmitButton > button {{
-        background: {PRIMARY} !important;
-        color: {TEXT_DARK} !important;
-        border: none !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
+        background: {PRIMARY} !important; color: {TEXT_DARK} !important;
+        border: none !important; font-weight: 600 !important; border-radius: 8px !important;
     }}
     .stButton > button:hover, .stFormSubmitButton > button:hover {{
-        background: {PRIMARY_DARK} !important;
-        color: {TEXT_DARK} !important;
+        background: {PRIMARY_DARK} !important; color: {TEXT_DARK} !important;
     }}
 
-    /* Visit cards */
     .visit-card {{
-        background: {BG_LIGHT};
-        border-radius: 12px;
-        padding: 14px 16px;
-        margin-bottom: 8px;
-        border: 1px solid #EEE;
+        background: {BG_LIGHT}; border-radius: 12px; padding: 14px 16px;
+        margin-bottom: 8px; border: 1px solid #EEE;
     }}
     .visit-card * {{ color: {TEXT_DARK} !important; }}
 
-    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {{ gap: 4px; }}
     .stTabs [data-baseweb="tab"] {{
-        background: {BG_LIGHT};
-        border-radius: 8px 8px 0 0;
-        color: {TEXT_DARK} !important;
+        background: {BG_LIGHT}; border-radius: 8px 8px 0 0; color: {TEXT_DARK} !important;
     }}
-    .stTabs [aria-selected="true"] {{
-        background: {PRIMARY} !important;
-        color: {TEXT_DARK} !important;
-    }}
+    .stTabs [aria-selected="true"] {{ background: {PRIMARY} !important; color: {TEXT_DARK} !important; }}
 
-    /* Alerts */
     .stAlert, .stAlert * {{ color: {TEXT_DARK} !important; }}
-
-    /* Dataframe */
     .stDataFrame {{ background: {BG_LIGHT}; }}
+
+    /* Geoloc detected card */
+    .geoloc-detected {{
+        background: linear-gradient(135deg, #E8F8E8 0%, #D4F0D4 100%);
+        border: 2px solid #4CAF50;
+        border-radius: 12px;
+        padding: 12px 16px;
+        margin: 10px 0;
+    }}
+    .geoloc-detected * {{ color: #2C5530 !important; }}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================================
-# CONNEXIONS GOOGLE - optimisées
+# GEOLOC HELPERS
+# =========================================================================
+
+def reverse_geocode(lat, lon):
+    """Récupère l'adresse complète depuis lat/lon (OpenStreetMap Nominatim)."""
+    try:
+        url = "https://nominatim.openstreetmap.org/reverse"
+        params = {"lat": lat, "lon": lon, "format": "json", "addressdetails": 1, "accept-language": "fr"}
+        headers = {"User-Agent": "MerciHandyFieldApp/1.0"}
+        resp = requests.get(url, params=params, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "address": data.get("display_name", ""),
+                "city": data.get("address", {}).get("city")
+                        or data.get("address", {}).get("town")
+                        or data.get("address", {}).get("village", ""),
+                "postcode": data.get("address", {}).get("postcode", ""),
+            }
+    except Exception:
+        pass
+    return None
+
+
+def find_nearby_shops(lat, lon, radius=150):
+    """Trouve les magasins (cosmétique, supermarché, parfumerie) autour via Overpass API."""
+    try:
+        # Overpass query : cherche shops dans un rayon donné
+        query = f"""
+        [out:json][timeout:10];
+        (
+          node["shop"~"cosmetics|perfumery|chemist|supermarket|convenience|department_store|beauty"](around:{radius},{lat},{lon});
+          way["shop"~"cosmetics|perfumery|chemist|supermarket|convenience|department_store|beauty"](around:{radius},{lat},{lon});
+        );
+        out center;
+        """
+        url = "https://overpass-api.de/api/interpreter"
+        resp = requests.post(url, data=query, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            shops = []
+            for elem in data.get("elements", []):
+                tags = elem.get("tags", {})
+                name = tags.get("name") or tags.get("brand")
+                if not name:
+                    continue
+                # Coordonnées
+                if elem["type"] == "node":
+                    elat, elon = elem["lat"], elem["lon"]
+                else:
+                    elat = elem.get("center", {}).get("lat", lat)
+                    elon = elem.get("center", {}).get("lon", lon)
+                # Distance approx
+                dist = ((elat - lat) ** 2 + (elon - lon) ** 2) ** 0.5 * 111000  # ~mètres
+                shops.append({
+                    "name": name,
+                    "shop_type": tags.get("shop", ""),
+                    "address": f"{tags.get('addr:housenumber','')} {tags.get('addr:street','')}".strip(),
+                    "lat": elat,
+                    "lon": elon,
+                    "distance_m": round(dist),
+                })
+            shops.sort(key=lambda x: x["distance_m"])
+            return shops[:10]
+    except Exception:
+        pass
+    return []
+
+
+def detect_enseigne_from_name(shop_name, enseignes_list):
+    """Essaie de matcher le nom du magasin OSM avec une enseigne connue."""
+    name_lower = shop_name.lower()
+    for enseigne in enseignes_list:
+        if enseigne.lower() in name_lower:
+            return enseigne
+    return None
+
+
+# =========================================================================
+# CONNEXIONS GOOGLE
 # =========================================================================
 
 @st.cache_resource
 def get_google_clients():
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"],
-            scopes=scopes
-        )
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         gc = gspread.authorize(creds)
         drive = build("drive", "v3", credentials=creds)
         return gc, drive
@@ -234,20 +254,23 @@ def get_google_clients():
 
 @st.cache_resource
 def get_workbook():
-    """Cache le workbook au niveau ressource (1 seul appel par session)."""
     gc, _ = get_google_clients()
-    sheet_id = st.secrets["sheet_id"]
-    return gc.open_by_key(sheet_id)
+    return gc.open_by_key(st.secrets["sheet_id"])
 
 
 @st.cache_resource
 def get_visits_sheet():
-    """Cache l'onglet visites."""
     wb = get_workbook()
     sheet = wb.sheet1
     try:
-        if not sheet.row_values(1):
+        existing = sheet.row_values(1)
+        if not existing:
             sheet.append_row(SHEET_COLUMNS)
+        elif len(existing) < len(SHEET_COLUMNS):
+            # Ajoute les colonnes manquantes (geoloc) si Sheet créée avant v3
+            for i, col in enumerate(SHEET_COLUMNS):
+                if i >= len(existing):
+                    sheet.update_cell(1, i + 1, col)
     except Exception:
         pass
     return sheet
@@ -255,7 +278,6 @@ def get_visits_sheet():
 
 @st.cache_resource
 def get_config_sheet(name):
-    """Cache un onglet de config (créé si absent)."""
     wb = get_workbook()
     try:
         ws = wb.worksheet(name)
@@ -266,24 +288,19 @@ def get_config_sheet(name):
 
 
 def init_config_if_empty(name, default_values):
-    """Initialise un onglet de config avec les valeurs par défaut s'il est vide."""
     ws = get_config_sheet(name)
     values = ws.col_values(1)
     if len(values) <= 1:
-        # Batch insert pour limiter les appels API
-        rows = [[v] for v in default_values]
-        ws.append_rows(rows)
+        ws.append_rows([[v] for v in default_values])
     return ws
 
 
 @st.cache_data(ttl=300)
 def load_config_list(name, default_values_tuple):
-    """Charge une liste de config (cache 5min). default_values_tuple pour cache hashable."""
     default_values = list(default_values_tuple)
     ws = init_config_if_empty(name, default_values)
     values = ws.col_values(1)
     result = [v for v in values[1:] if v.strip()]
-    # Si toujours vide après init, retourner les défauts
     return result if result else default_values
 
 
@@ -306,29 +323,15 @@ def remove_from_config(name, value, default_values):
 def upload_photo(photo_file, filename):
     _, drive = get_google_clients()
     folder_id = st.secrets["drive_folder_id"]
-
     file_metadata = {"name": filename, "parents": [folder_id]}
-    media = MediaIoBaseUpload(
-        io.BytesIO(photo_file.getvalue()),
-        mimetype=photo_file.type or "image/jpeg"
-    )
-    file = drive.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id, webViewLink"
-    ).execute()
-
-    drive.permissions().create(
-        fileId=file["id"],
-        body={"type": "anyone", "role": "reader"}
-    ).execute()
-
+    media = MediaIoBaseUpload(io.BytesIO(photo_file.getvalue()), mimetype=photo_file.type or "image/jpeg")
+    file = drive.files().create(body=file_metadata, media_body=media, fields="id, webViewLink").execute()
+    drive.permissions().create(fileId=file["id"], body={"type": "anyone", "role": "reader"}).execute()
     return file["webViewLink"]
 
 
 @st.cache_data(ttl=60)
 def load_visits():
-    """Cache 1 minute pour les visites."""
     sheet = get_visits_sheet()
     data = sheet.get_all_records()
     if not data:
@@ -342,7 +345,9 @@ def save_visit(visit_data, photo_urls):
         visit_data["id"], visit_data["date"], visit_data["heure"],
         visit_data["commercial"], visit_data["enseigne"], visit_data["magasin"],
         visit_data["ville"], visit_data["projet"], ", ".join(visit_data["etat"]),
-        visit_data["commentaire"], " | ".join(photo_urls)
+        visit_data["commentaire"], " | ".join(photo_urls),
+        visit_data.get("latitude", ""), visit_data.get("longitude", ""),
+        visit_data.get("adresse", ""),
     ]
     sheet.append_row(row)
     st.cache_data.clear()
@@ -398,6 +403,9 @@ def screen_home():
     st.write("")
     if st.button("➕ Nouvelle visite", use_container_width=True, type="primary"):
         st.session_state.screen = "new_visit"
+        # Reset geoloc state
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+            st.session_state.pop(k, None)
         st.rerun()
 
     st.write("")
@@ -447,7 +455,7 @@ def screen_home():
 
 
 def screen_new_visit():
-    st.markdown('<div class="main-header"><h1>📝 Nouvelle visite</h1><p>Remplis les champs ci-dessous</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h1>📝 Nouvelle visite</h1><p>Détecte ta position et remplis</p></div>', unsafe_allow_html=True)
 
     if st.button("← Retour"):
         st.session_state.screen = "home"
@@ -457,10 +465,88 @@ def screen_new_visit():
     projets = load_config_list("Projets", tuple(DEFAULT_PROJETS))
     etats = load_config_list("Etats", tuple(DEFAULT_ETATS))
 
+    # ============= GÉOLOCALISATION =============
+    st.markdown("### 📍 Étape 1 — Localise-toi")
+    st.caption("Clique sur le bouton 🌐 ci-dessous pour détecter ta position. La première fois, ton navigateur te demandera l'autorisation.")
+
+    location = streamlit_geolocation()
+
+    if location and location.get("latitude") and location["latitude"] != "None":
+        lat = float(location["latitude"])
+        lon = float(location["longitude"])
+
+        # Stocker en session
+        if st.session_state.get("geo_lat") != lat:
+            st.session_state.geo_lat = lat
+            st.session_state.geo_lon = lon
+
+            # Reverse geocoding
+            with st.spinner("Recherche de l'adresse…"):
+                geo_info = reverse_geocode(lat, lon)
+                if geo_info:
+                    st.session_state.geo_address = geo_info["address"]
+                    st.session_state.geo_city = geo_info["city"]
+                else:
+                    st.session_state.geo_address = ""
+                    st.session_state.geo_city = ""
+
+            # Recherche des magasins à proximité
+            with st.spinner("Recherche des magasins à proximité…"):
+                shops = find_nearby_shops(lat, lon, radius=200)
+                st.session_state.geo_shops = shops
+
+        # Affichage de la position détectée
+        st.markdown(f"""
+        <div class="geoloc-detected">
+            <strong>📍 Position détectée</strong><br>
+            <span style="font-size:13px;">{st.session_state.get("geo_address", "Adresse inconnue")}</span><br>
+            <span style="font-size:11px; opacity:0.7;">Lat: {lat:.5f} · Lon: {lon:.5f}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Liste des magasins trouvés
+        shops = st.session_state.get("geo_shops", [])
+        if shops:
+            st.markdown("**🏪 Magasins détectés à proximité :**")
+            shop_options = ["✏️ Saisir manuellement"] + [
+                f"{s['name']} ({s['distance_m']}m)" + (f" · {s['shop_type']}" if s['shop_type'] else "")
+                for s in shops
+            ]
+            selected_idx = st.radio(
+                "Sélectionne le magasin",
+                range(len(shop_options)),
+                format_func=lambda i: shop_options[i],
+                label_visibility="collapsed",
+                key="shop_selector"
+            )
+            if selected_idx > 0:
+                st.session_state.geo_selected = shops[selected_idx - 1]
+            else:
+                st.session_state.geo_selected = None
+        else:
+            st.info("Aucun magasin détecté dans un rayon de 200m. Tu peux remplir manuellement.")
+            st.session_state.geo_selected = None
+    else:
+        st.info("👆 Clique sur l'icône GPS ci-dessus pour détecter ta position (optionnel mais recommandé).")
+
+    # ============= FORMULAIRE =============
+    st.markdown("### 📝 Étape 2 — Remplis les détails")
+
+    selected_shop = st.session_state.get("geo_selected")
+    default_magasin = selected_shop["name"] if selected_shop else ""
+    default_ville = st.session_state.get("geo_city", "")
+
+    # Pré-détection enseigne
+    default_enseigne_idx = 0
+    if selected_shop:
+        detected_enseigne = detect_enseigne_from_name(selected_shop["name"], enseignes)
+        if detected_enseigne and detected_enseigne in enseignes:
+            default_enseigne_idx = enseignes.index(detected_enseigne)
+
     with st.form("new_visit_form", clear_on_submit=True):
-        enseigne = st.selectbox("Enseigne *", enseignes)
-        magasin = st.text_input("Nom du magasin *", placeholder="Ex : Monoprix Haussmann")
-        ville = st.text_input("Ville *", placeholder="Paris")
+        enseigne = st.selectbox("Enseigne *", enseignes, index=default_enseigne_idx)
+        magasin = st.text_input("Nom du magasin *", value=default_magasin, placeholder="Ex : Monoprix Haussmann")
+        ville = st.text_input("Ville *", value=default_ville, placeholder="Paris")
         projet = st.selectbox("Projet / animation *", projets)
 
         st.markdown("**État du linéaire** (coche tout ce qui s'applique)")
@@ -514,12 +600,17 @@ def screen_new_visit():
                     "ville": ville.strip(),
                     "projet": projet,
                     "etat": etat_selected,
-                    "commentaire": commentaire.strip()
+                    "commentaire": commentaire.strip(),
+                    "latitude": st.session_state.get("geo_lat", ""),
+                    "longitude": st.session_state.get("geo_lon", ""),
+                    "adresse": st.session_state.get("geo_address", ""),
                 }
                 save_visit(visit_data, photo_urls)
 
             st.success(f"✅ Visite enregistrée ! ({len(photo_urls)} photo(s) uploadée(s))")
             st.balloons()
+            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+                st.session_state.pop(k, None)
             st.session_state.screen = "home"
             st.rerun()
 
@@ -548,7 +639,7 @@ def screen_history():
     with col2:
         filter_projet = st.multiselect("Projet", sorted(df_user["Projet"].unique()))
 
-    search = st.text_input("🔍 Rechercher (magasin, ville, commentaire…)", placeholder="Ex : Haussmann")
+    search = st.text_input("🔍 Rechercher", placeholder="Magasin, ville, commentaire…")
 
     df_filtered = df_user.copy()
     if filter_enseigne:
@@ -583,6 +674,10 @@ def screen_history():
         if row.get("Commentaire"):
             commentaire_section = f'<div style="margin-top:6px; font-size:12px; color:#666 !important; font-style:italic;">💬 {row["Commentaire"]}</div>'
 
+        adresse_section = ""
+        if row.get("Adresse_complete"):
+            adresse_section = f'<div style="margin-top:4px; font-size:11px; color:#888 !important;">📍 {row["Adresse_complete"]}</div>'
+
         st.markdown(f"""
         <div class="visit-card">
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -590,6 +685,7 @@ def screen_history():
                     <strong>{row["Magasin"]}</strong> · <span style="color:#888 !important;">{row["Enseigne"]} — {row["Ville"]}</span><br>
                     <span style="font-size:12px; color:#666 !important;">{row["Date"]} {row["Heure"]} · {row["Projet"]}</span>
                     <div style="margin-top:6px; font-size:13px;">{row["Etat"]}</div>
+                    {adresse_section}
                     {commentaire_section}
                     {photos_section}
                 </div>
@@ -626,6 +722,21 @@ def screen_dashboard():
         st.markdown(f'<div class="stat-card"><div class="stat-number">{enseignes_visited}</div><div class="stat-label">Enseignes</div></div>', unsafe_allow_html=True)
 
     st.write("")
+
+    # Carte des visites
+    if "Latitude" in df.columns and "Longitude" in df.columns:
+        df_geo = df[df["Latitude"].astype(str).str.strip() != ""].copy()
+        if not df_geo.empty:
+            try:
+                df_geo["lat"] = pd.to_numeric(df_geo["Latitude"], errors="coerce")
+                df_geo["lon"] = pd.to_numeric(df_geo["Longitude"], errors="coerce")
+                df_geo = df_geo.dropna(subset=["lat", "lon"])
+                if not df_geo.empty:
+                    st.markdown("### 🗺️ Carte des visites")
+                    st.map(df_geo[["lat", "lon"]], zoom=5)
+            except Exception:
+                pass
+
     st.markdown("### Visites par enseigne")
     by_enseigne = df["Enseigne"].value_counts()
     st.bar_chart(by_enseigne)
@@ -683,7 +794,7 @@ def screen_admin_login():
 
 
 def screen_admin():
-    st.markdown('<div class="main-header"><h1>⚙️ Admin — Configuration</h1><p>Gère les listes utilisées dans le formulaire</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h1>⚙️ Admin — Configuration</h1><p>Gère les listes du formulaire</p></div>', unsafe_allow_html=True)
 
     col_back, col_logout = st.columns(2)
     with col_back:
@@ -710,7 +821,6 @@ def screen_admin():
 
 def manage_list(name, defaults, with_emoji_hint=False):
     items = load_config_list(name, tuple(defaults))
-
     st.markdown(f"### {len(items)} valeur(s) actives")
 
     if with_emoji_hint:
