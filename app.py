@@ -13,6 +13,8 @@ from googleapiclient.http import MediaIoBaseUpload
 import io
 import uuid
 import requests
+import time
+from PIL import Image
 from streamlit_geolocation import streamlit_geolocation
 
 # =========================================================================
@@ -320,14 +322,82 @@ def remove_from_config(name, value, default_values):
     st.cache_data.clear()
 
 
-def upload_photo(photo_file, filename):
+def compress_image(photo_file, max_size_kb=800, max_dimension=1600):
+    """Compresse une photo pour upload rapide et fiable."""
+    try:
+        img = Image.open(io.BytesIO(photo_file.getvalue()))
+        # Convertir en RGB si nécessaire (HEIC, PNG avec alpha)
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # Redimensionner si trop grand
+        if max(img.size) > max_dimension:
+            ratio = max_dimension / max(img.size)
+            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Compresser progressivement jusqu'à atteindre la taille cible
+        quality = 85
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=quality, optimize=True)
+        while output.tell() > max_size_kb * 1024 and quality > 50:
+            quality -= 10
+            output = io.BytesIO()
+            img.save(output, format="JPEG", quality=quality, optimize=True)
+
+        output.seek(0)
+        return output
+    except Exception as e:
+        # Si la compression échoue, on renvoie l'original
+        return io.BytesIO(photo_file.getvalue())
+
+
+def upload_photo(photo_file, filename, max_retries=3):
+    """Upload une photo sur Google Drive avec compression et retry."""
     _, drive = get_google_clients()
     folder_id = st.secrets["drive_folder_id"]
-    file_metadata = {"name": filename, "parents": [folder_id]}
-    media = MediaIoBaseUpload(io.BytesIO(photo_file.getvalue()), mimetype=photo_file.type or "image/jpeg")
-    file = drive.files().create(body=file_metadata, media_body=media, fields="id, webViewLink").execute()
-    drive.permissions().create(fileId=file["id"], body={"type": "anyone", "role": "reader"}).execute()
-    return file["webViewLink"]
+
+    # Compression
+    compressed = compress_image(photo_file)
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            file_metadata = {"name": filename, "parents": [folder_id]}
+            # Reset du buffer à chaque tentative
+            compressed.seek(0)
+            media = MediaIoBaseUpload(
+                compressed,
+                mimetype="image/jpeg",
+                resumable=True,
+                chunksize=512 * 1024,  # 512 KB chunks
+            )
+            file = drive.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields="id, webViewLink"
+            ).execute()
+
+            # Permission publique
+            drive.permissions().create(
+                fileId=file["id"],
+                body={"type": "anyone", "role": "reader"}
+            ).execute()
+
+            return file["webViewLink"]
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # 1s, 2s, 4s
+
+    # Toutes les tentatives ont échoué
+    raise last_error
 
 
 @st.cache_data(ttl=60)
@@ -584,11 +654,19 @@ def screen_new_visit():
                 now = datetime.now()
 
                 photo_urls = []
+                photos_failed = 0
                 if photos:
+                    progress_bar = st.progress(0, text="Upload des photos…")
                     for i, photo in enumerate(photos):
-                        filename = f"{now.strftime('%Y%m%d_%H%M%S')}_{enseigne}_{magasin.replace(' ', '_')}_{i+1}.jpg"
-                        url = upload_photo(photo, filename)
-                        photo_urls.append(url)
+                        try:
+                            filename = f"{now.strftime('%Y%m%d_%H%M%S')}_{enseigne}_{magasin.replace(' ', '_')}_{i+1}.jpg"
+                            url = upload_photo(photo, filename)
+                            photo_urls.append(url)
+                        except Exception as e:
+                            photos_failed += 1
+                            st.warning(f"⚠️ Photo {i+1} non envoyée (sera à reprendre) : {str(e)[:100]}")
+                        progress_bar.progress((i + 1) / len(photos), text=f"Upload {i+1}/{len(photos)}")
+                    progress_bar.empty()
 
                 visit_data = {
                     "id": visit_id,
@@ -607,7 +685,10 @@ def screen_new_visit():
                 }
                 save_visit(visit_data, photo_urls)
 
-            st.success(f"✅ Visite enregistrée ! ({len(photo_urls)} photo(s) uploadée(s))")
+            if photos_failed > 0:
+                st.success(f"✅ Visite enregistrée — {len(photo_urls)} photo(s) ok, {photos_failed} échec(s).")
+            else:
+                st.success(f"✅ Visite enregistrée ! ({len(photo_urls)} photo(s) uploadée(s))")
             st.balloons()
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
                 st.session_state.pop(k, None)
