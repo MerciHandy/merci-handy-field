@@ -458,12 +458,9 @@ def get_admin_password():
 
 
 def make_thumbnail_url(url, size=120):
-    """Génère une URL de miniature Cloudinary à partir d'une URL Cloudinary."""
+    """Génère une URL de miniature Cloudinary."""
     if not url or "res.cloudinary.com" not in url:
         return url
-    # Insère les transformations après /upload/
-    # Ex: https://res.cloudinary.com/xxx/image/upload/v123/folder/img.jpg
-    #  -> https://res.cloudinary.com/xxx/image/upload/w_120,h_120,c_fill,q_auto,f_auto/v123/folder/img.jpg
     if "/upload/" in url:
         return url.replace(
             "/upload/",
@@ -473,31 +470,63 @@ def make_thumbnail_url(url, size=120):
     return url
 
 
-def render_thumbnails(photos_urls_str, size=120, max_thumbs=4):
-    """Génère le HTML d'une rangée de miniatures cliquables."""
+def render_bar_chart(series, max_items=10):
+    """Affiche un graphique en barres rose harmonisé avec le thème."""
+    if series.empty:
+        st.info("Aucune donnée à afficher.")
+        return
+
+    series = series.head(max_items)
+    max_val = series.max()
+
+    bars_html = []
+    for label, value in series.items():
+        width_pct = (value / max_val) * 100 if max_val > 0 else 0
+        label_safe = html.escape(str(label))
+        bars_html.append(f"""
+        <div style="margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span style="font-size:13px;color:#2C2C2A;font-weight:500;">{label_safe}</span>
+                <span style="font-size:13px;color:#D88FCE;font-weight:600;">{value}</span>
+            </div>
+            <div style="background:#F5E8F2;border-radius:6px;height:10px;overflow:hidden;">
+                <div style="background:linear-gradient(90deg,#EDADE7 0%,#D88FCE 100%);height:100%;width:{width_pct}%;border-radius:6px;transition:width 0.4s;"></div>
+            </div>
+        </div>
+        """)
+
+    html_content = "".join(bars_html)
+    st.markdown(
+        f'<div style="background:#FFFFFF;padding:16px 20px;border-radius:12px;border:1px solid #EEE;margin-bottom:16px;">{html_content}</div>',
+        unsafe_allow_html=True
+    )
+
+
+def render_thumbnails(photos_urls_str, size=120, max_thumbs=4, display_size=72):
+    """Génère le HTML d'une rangée de miniatures cliquables. Une seule ligne, pas de retours."""
     if not photos_urls_str:
         return ""
     urls = [u.strip() for u in str(photos_urls_str).split("|") if u.strip()]
     if not urls:
         return ""
 
-    thumbs_html = []
-    for i, url in enumerate(urls[:max_thumbs]):
+    parts = []
+    for url in urls[:max_thumbs]:
         thumb_url = make_thumbnail_url(url, size=size)
-        full_url = html.escape(url)
-        thumb_url_safe = html.escape(thumb_url)
-        thumbs_html.append(
-            f'<a href="{full_url}" target="_blank" style="display:inline-block; margin-right:6px; margin-top:6px;">'
-            f'<img src="{thumb_url_safe}" style="width:{size//2}px; height:{size//2}px; '
-            f'object-fit:cover; border-radius:8px; border:1px solid #DDD;" />'
+        full_url = html.escape(url, quote=True)
+        thumb_url_safe = html.escape(thumb_url, quote=True)
+        parts.append(
+            f'<a href="{full_url}" target="_blank" rel="noopener" style="display:inline-block;margin-right:6px;text-decoration:none;">'
+            f'<img src="{thumb_url_safe}" style="width:{display_size}px;height:{display_size}px;object-fit:cover;border-radius:8px;border:1px solid #E8D5E5;display:block;" />'
             f'</a>'
         )
 
     extra = ""
     if len(urls) > max_thumbs:
-        extra = f'<span style="font-size:11px; color:#888 !important; margin-left:4px;">+{len(urls) - max_thumbs}</span>'
+        extra = f'<span style="font-size:11px;color:#888;margin-left:4px;vertical-align:middle;">+{len(urls) - max_thumbs}</span>'
 
-    return f'<div style="margin-top:6px;">{"".join(thumbs_html)}{extra}</div>'
+    # Une seule ligne, sans retours à la ligne (évite les bugs de rendu Streamlit)
+    return f'<div style="margin-top:8px;display:flex;align-items:center;flex-wrap:wrap;">{"".join(parts)}{extra}</div>'
 
 
 # =========================================================================
@@ -900,13 +929,14 @@ def screen_dashboard():
             except Exception:
                 pass
 
+    # Graphiques personnalisés en rose
     st.markdown("### Visites par enseigne")
     by_enseigne = df["Enseigne"].value_counts()
-    st.bar_chart(by_enseigne)
+    render_bar_chart(by_enseigne)
 
     st.markdown("### Visites par projet")
     by_projet = df["Projet"].value_counts()
-    st.bar_chart(by_projet)
+    render_bar_chart(by_projet)
 
     st.markdown("### Filtres")
     col_f1, col_f2 = st.columns(2)
