@@ -423,6 +423,21 @@ def save_visit(visit_data, photo_urls):
     st.cache_data.clear()
 
 
+def delete_visit_by_id(visit_id):
+    """Supprime une visite par son ID dans la Sheet."""
+    sheet = get_visits_sheet()
+    all_data = sheet.get_all_values()
+    # all_data[0] = header, all_data[1+] = data
+    for i, row in enumerate(all_data):
+        if i == 0:  # skip header
+            continue
+        if row and len(row) > 0 and row[0] == visit_id:
+            sheet.delete_rows(i + 1)  # 1-indexed in gspread
+            st.cache_data.clear()
+            return True
+    return False
+
+
 def get_admin_password():
     try:
         return st.secrets.get("admin_password", DEFAULT_ADMIN_PASSWORD)
@@ -890,14 +905,108 @@ def screen_admin():
 
     st.write("")
 
-    tab1, tab2, tab3 = st.tabs(["🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Visites", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire"])
 
     with tab1:
-        manage_list("Enseignes", DEFAULT_ENSEIGNES)
+        manage_visits()
     with tab2:
-        manage_list("Projets", DEFAULT_PROJETS)
+        manage_list("Enseignes", DEFAULT_ENSEIGNES)
     with tab3:
+        manage_list("Projets", DEFAULT_PROJETS)
+    with tab4:
         manage_list("Etats", DEFAULT_ETATS, with_emoji_hint=True)
+
+
+def manage_visits():
+    """Gestion admin des visites : liste, filtre, suppression."""
+    df = load_visits()
+    if df.empty:
+        st.info("Aucune visite enregistrée pour le moment.")
+        return
+
+    st.markdown(f"### {len(df)} visite(s) au total")
+    st.caption("💡 Utilise les filtres ci-dessous pour retrouver les doublons ou visites à supprimer.")
+
+    # Filtres
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_commercial = st.multiselect("Commercial", sorted(df["Commercial"].unique()), key="admin_filter_commercial")
+    with col2:
+        filter_enseigne = st.multiselect("Enseigne", sorted(df["Enseigne"].unique()), key="admin_filter_enseigne")
+
+    search = st.text_input("🔍 Rechercher", placeholder="Magasin, ville, ID, commentaire…", key="admin_search")
+
+    df_filtered = df.copy()
+    if filter_commercial:
+        df_filtered = df_filtered[df_filtered["Commercial"].isin(filter_commercial)]
+    if filter_enseigne:
+        df_filtered = df_filtered[df_filtered["Enseigne"].isin(filter_enseigne)]
+    if search:
+        s = search.lower()
+        mask = (
+            df_filtered["Magasin"].astype(str).str.lower().str.contains(s, na=False) |
+            df_filtered["Ville"].astype(str).str.lower().str.contains(s, na=False) |
+            df_filtered["ID"].astype(str).str.lower().str.contains(s, na=False) |
+            df_filtered["Commentaire"].astype(str).str.lower().str.contains(s, na=False)
+        )
+        df_filtered = df_filtered[mask]
+
+    df_filtered = df_filtered.sort_values(by=["Date", "Heure"], ascending=False)
+
+    st.markdown(f"### {len(df_filtered)} résultat(s)")
+
+    if df_filtered.empty:
+        st.info("Aucune visite ne correspond à ces filtres.")
+        return
+
+    # Si une confirmation de suppression est en cours
+    pending_delete = st.session_state.get("pending_delete_visit_id")
+
+    for _, row in df_filtered.iterrows():
+        visit_id = row["ID"]
+        etat_emoji = row["Etat"].split()[0] if row["Etat"] else "📍"
+
+        col_card, col_btn = st.columns([5, 1])
+
+        with col_card:
+            commentaire_html = ""
+            if row.get("Commentaire"):
+                commentaire_html = f'<div style="margin-top:4px; font-size:11px; color:#666 !important; font-style:italic;">💬 {row["Commentaire"][:80]}{"…" if len(str(row["Commentaire"])) > 80 else ""}</div>'
+
+            st.markdown(f"""
+            <div class="visit-card" style="padding:10px 14px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div style="flex:1;">
+                        <strong>{row["Magasin"]}</strong> · <span style="color:#888 !important;">{row["Enseigne"]} — {row["Ville"]}</span><br>
+                        <span style="font-size:11px; color:#666 !important;">{row["Date"]} {row["Heure"]} · 👤 {row["Commercial"]} · ID: <code>{visit_id}</code></span>
+                        <div style="margin-top:4px; font-size:12px;">{etat_emoji} {row["Projet"]}</div>
+                        {commentaire_html}
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_btn:
+            if pending_delete == visit_id:
+                # Affiche la confirmation
+                if st.button("✅", key=f"confirm_{visit_id}", help="Confirmer la suppression"):
+                    with st.spinner("Suppression…"):
+                        if delete_visit_by_id(visit_id):
+                            st.session_state.pop("pending_delete_visit_id", None)
+                            st.success("Visite supprimée.")
+                            st.rerun()
+                        else:
+                            st.error("Erreur lors de la suppression.")
+                if st.button("✕", key=f"cancel_{visit_id}", help="Annuler"):
+                    st.session_state.pop("pending_delete_visit_id", None)
+                    st.rerun()
+            else:
+                if st.button("🗑️", key=f"del_visit_{visit_id}", help="Supprimer cette visite"):
+                    st.session_state["pending_delete_visit_id"] = visit_id
+                    st.rerun()
+
+    if pending_delete:
+        st.warning(f"⚠️ Clique sur ✅ pour confirmer la suppression de la visite `{pending_delete}`, ou ✕ pour annuler.")
 
 
 def manage_list(name, defaults, with_emoji_hint=False):
