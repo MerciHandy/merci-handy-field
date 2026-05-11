@@ -7,3 +7,5 @@ google-api-python-client
 streamlit-geolocation
 requests
 Pillow
+cloudinary
+ 
