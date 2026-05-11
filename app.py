@@ -17,6 +17,8 @@ import time
 import html
 from PIL import Image
 from streamlit_geolocation import streamlit_geolocation
+import cloudinary
+import cloudinary.uploader
 
 # =========================================================================
 # CONFIGURATION
@@ -359,45 +361,54 @@ def compress_image(photo_file, max_size_kb=800, max_dimension=1600):
         return io.BytesIO(photo_file.getvalue())
 
 
-def upload_photo(photo_file, filename, max_retries=3):
-    """Upload une photo sur Google Drive avec compression et retry."""
-    _, drive = get_google_clients()
-    folder_id = st.secrets["drive_folder_id"]
+def configure_cloudinary():
+    """Configure Cloudinary depuis les secrets."""
+    try:
+        cloudinary.config(
+            cloud_name=st.secrets["cloudinary"]["cloud_name"],
+            api_key=st.secrets["cloudinary"]["api_key"],
+            api_secret=st.secrets["cloudinary"]["api_secret"],
+            secure=True
+        )
+        return True
+    except Exception as e:
+        st.error(f"Erreur configuration Cloudinary : {e}")
+        return False
 
-    # Compression
+
+def upload_photo(photo_file, filename, max_retries=3):
+    """Upload une photo sur Cloudinary avec compression et retry."""
+    if not configure_cloudinary():
+        raise Exception("Cloudinary non configuré")
+
+    # Compression locale avant envoi
     compressed = compress_image(photo_file)
 
     last_error = None
     for attempt in range(max_retries):
         try:
-            file_metadata = {"name": filename, "parents": [folder_id]}
-            # Reset du buffer à chaque tentative
             compressed.seek(0)
-            media = MediaIoBaseUpload(
+            # Public ID basé sur le filename (sans extension)
+            public_id = f"merci-handy-field/{filename.rsplit('.', 1)[0]}"
+
+            result = cloudinary.uploader.upload(
                 compressed,
-                mimetype="image/jpeg",
-                resumable=True,
-                chunksize=512 * 1024,  # 512 KB chunks
+                public_id=public_id,
+                resource_type="image",
+                folder="merci-handy-field",
+                use_filename=True,
+                unique_filename=True,
+                overwrite=False,
+                # Optimisation auto côté Cloudinary
+                quality="auto:good",
+                fetch_format="auto",
             )
-            file = drive.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields="id, webViewLink"
-            ).execute()
-
-            # Permission publique
-            drive.permissions().create(
-                fileId=file["id"],
-                body={"type": "anyone", "role": "reader"}
-            ).execute()
-
-            return file["webViewLink"]
+            return result.get("secure_url", "")
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # 1s, 2s, 4s
+                time.sleep(2 ** attempt)
 
-    # Toutes les tentatives ont échoué
     raise last_error
 
 
