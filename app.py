@@ -458,15 +458,24 @@ def get_admin_password():
 
 
 def make_thumbnail_url(url, size=120):
-    """Génère une URL de miniature Cloudinary."""
+    """Génère une URL de miniature Cloudinary avec rotation auto selon EXIF."""
     if not url or "res.cloudinary.com" not in url:
         return url
     if "/upload/" in url:
         return url.replace(
             "/upload/",
-            f"/upload/w_{size},h_{size},c_fill,q_auto,f_auto/",
+            f"/upload/a_exif,w_{size},h_{size},c_fill,q_auto,f_auto/",
             1
         )
+    return url
+
+
+def make_fullsize_url(url):
+    """Génère une URL pleine taille avec rotation auto EXIF (pour le clic)."""
+    if not url or "res.cloudinary.com" not in url:
+        return url
+    if "/upload/" in url:
+        return url.replace("/upload/", "/upload/a_exif,q_auto,f_auto/", 1)
     return url
 
 
@@ -510,10 +519,11 @@ def render_thumbnails(photos_urls_str, size=120, max_thumbs=4, display_size=72):
     parts = []
     for url in urls[:max_thumbs]:
         thumb_url = make_thumbnail_url(url, size=size)
-        full_url = html.escape(url, quote=True)
+        full_url_rotated = make_fullsize_url(url)
+        full_url_safe = html.escape(full_url_rotated, quote=True)
         thumb_url_safe = html.escape(thumb_url, quote=True)
         parts.append(
-            f'<a href="{full_url}" target="_blank" rel="noopener" style="display:inline-block;margin-right:6px;text-decoration:none;">'
+            f'<a href="{full_url_safe}" target="_blank" rel="noopener" style="display:inline-block;margin-right:6px;text-decoration:none;">'
             f'<img src="{thumb_url_safe}" style="width:{display_size}px;height:{display_size}px;object-fit:cover;border-radius:8px;border:1px solid #E8D5E5;display:block;" />'
             f'</a>'
         )
