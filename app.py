@@ -14,6 +14,7 @@ import io
 import uuid
 import requests
 import time
+import html
 from PIL import Image
 from streamlit_geolocation import streamlit_geolocation
 
@@ -502,12 +503,16 @@ def screen_home():
         df_user_sorted = df_user.sort_values(by=["Date", "Heure"], ascending=False).head(10)
         for _, row in df_user_sorted.iterrows():
             etat_emoji = row["Etat"].split()[0] if row["Etat"] else "📍"
+            magasin_safe = html.escape(str(row.get("Magasin", "")))
+            enseigne_safe = html.escape(str(row.get("Enseigne", "")))
+            date_safe = html.escape(str(row.get("Date", "")))
+            projet_safe = html.escape(str(row.get("Projet", "")))
             st.markdown(f"""
             <div class="visit-card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div>
-                        <strong>{row["Magasin"]}</strong> · <span style="color:#888 !important;">{row["Enseigne"]}</span><br>
-                        <span style="font-size:12px; color:#666 !important;">{row["Date"]} · {row["Projet"]}</span>
+                        <strong>{magasin_safe}</strong> · <span style="color:#888 !important;">{enseigne_safe}</span><br>
+                        <span style="font-size:12px; color:#666 !important;">{date_safe} · {projet_safe}</span>
                     </div>
                     <div style="font-size:20px;">{etat_emoji}</div>
                 </div>
@@ -759,28 +764,39 @@ def screen_history():
         return
 
     for _, row in df_filtered.iterrows():
+        # Échappement HTML pour éviter que les commentaires cassent l'affichage
+        magasin_safe = html.escape(str(row.get("Magasin", "")))
+        enseigne_safe = html.escape(str(row.get("Enseigne", "")))
+        ville_safe = html.escape(str(row.get("Ville", "")))
+        projet_safe = html.escape(str(row.get("Projet", "")))
+        etat_safe = html.escape(str(row.get("Etat", "")))
+        date_safe = html.escape(str(row.get("Date", "")))
+        heure_safe = html.escape(str(row.get("Heure", "")))
+
         photos_section = ""
         if row.get("Photos_URLs"):
             urls = [u.strip() for u in str(row["Photos_URLs"]).split("|") if u.strip()]
             if urls:
-                links = " · ".join([f'<a href="{u}" target="_blank" style="color:{PRIMARY_DARK} !important;">📷 Photo {i+1}</a>' for i, u in enumerate(urls)])
+                links = " · ".join([f'<a href="{html.escape(u)}" target="_blank" style="color:{PRIMARY_DARK} !important;">📷 Photo {i+1}</a>' for i, u in enumerate(urls)])
                 photos_section = f'<div style="margin-top:8px; font-size:12px;">{links}</div>'
 
         commentaire_section = ""
         if row.get("Commentaire"):
-            commentaire_section = f'<div style="margin-top:6px; font-size:12px; color:#666 !important; font-style:italic;">💬 {row["Commentaire"]}</div>'
+            commentaire_safe = html.escape(str(row["Commentaire"]))
+            commentaire_section = f'<div style="margin-top:6px; font-size:12px; color:#666 !important; font-style:italic;">💬 {commentaire_safe}</div>'
 
         adresse_section = ""
         if row.get("Adresse_complete"):
-            adresse_section = f'<div style="margin-top:4px; font-size:11px; color:#888 !important;">📍 {row["Adresse_complete"]}</div>'
+            adresse_safe = html.escape(str(row["Adresse_complete"]))
+            adresse_section = f'<div style="margin-top:4px; font-size:11px; color:#888 !important;">📍 {adresse_safe}</div>'
 
         st.markdown(f"""
         <div class="visit-card">
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                 <div style="flex:1;">
-                    <strong>{row["Magasin"]}</strong> · <span style="color:#888 !important;">{row["Enseigne"]} — {row["Ville"]}</span><br>
-                    <span style="font-size:12px; color:#666 !important;">{row["Date"]} {row["Heure"]} · {row["Projet"]}</span>
-                    <div style="margin-top:6px; font-size:13px;">{row["Etat"]}</div>
+                    <strong>{magasin_safe}</strong> · <span style="color:#888 !important;">{enseigne_safe} — {ville_safe}</span><br>
+                    <span style="font-size:12px; color:#666 !important;">{date_safe} {heure_safe} · {projet_safe}</span>
+                    <div style="margin-top:6px; font-size:13px;">{etat_safe}</div>
                     {adresse_section}
                     {commentaire_section}
                     {photos_section}
@@ -966,20 +982,33 @@ def manage_visits():
         visit_id = row["ID"]
         etat_emoji = row["Etat"].split()[0] if row["Etat"] else "📍"
 
+        # Échappement HTML
+        magasin_safe = html.escape(str(row.get("Magasin", "")))
+        enseigne_safe = html.escape(str(row.get("Enseigne", "")))
+        ville_safe = html.escape(str(row.get("Ville", "")))
+        date_safe = html.escape(str(row.get("Date", "")))
+        heure_safe = html.escape(str(row.get("Heure", "")))
+        commercial_safe = html.escape(str(row.get("Commercial", "")))
+        projet_safe = html.escape(str(row.get("Projet", "")))
+        visit_id_safe = html.escape(str(visit_id))
+
         col_card, col_btn = st.columns([5, 1])
 
         with col_card:
             commentaire_html = ""
             if row.get("Commentaire"):
-                commentaire_html = f'<div style="margin-top:4px; font-size:11px; color:#666 !important; font-style:italic;">💬 {row["Commentaire"][:80]}{"…" if len(str(row["Commentaire"])) > 80 else ""}</div>'
+                comment_str = str(row["Commentaire"])
+                truncated = comment_str[:80] + ("…" if len(comment_str) > 80 else "")
+                commentaire_safe = html.escape(truncated)
+                commentaire_html = f'<div style="margin-top:4px; font-size:11px; color:#666 !important; font-style:italic;">💬 {commentaire_safe}</div>'
 
             st.markdown(f"""
             <div class="visit-card" style="padding:10px 14px;">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                     <div style="flex:1;">
-                        <strong>{row["Magasin"]}</strong> · <span style="color:#888 !important;">{row["Enseigne"]} — {row["Ville"]}</span><br>
-                        <span style="font-size:11px; color:#666 !important;">{row["Date"]} {row["Heure"]} · 👤 {row["Commercial"]} · ID: <code>{visit_id}</code></span>
-                        <div style="margin-top:4px; font-size:12px;">{etat_emoji} {row["Projet"]}</div>
+                        <strong>{magasin_safe}</strong> · <span style="color:#888 !important;">{enseigne_safe} — {ville_safe}</span><br>
+                        <span style="font-size:11px; color:#666 !important;">{date_safe} {heure_safe} · 👤 {commercial_safe} · ID: <code>{visit_id_safe}</code></span>
+                        <div style="margin-top:4px; font-size:12px;">{etat_emoji} {projet_safe}</div>
                         {commentaire_html}
                     </div>
                 </div>
