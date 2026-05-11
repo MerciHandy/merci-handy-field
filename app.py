@@ -457,6 +457,49 @@ def get_admin_password():
         return DEFAULT_ADMIN_PASSWORD
 
 
+def make_thumbnail_url(url, size=120):
+    """Génère une URL de miniature Cloudinary à partir d'une URL Cloudinary."""
+    if not url or "res.cloudinary.com" not in url:
+        return url
+    # Insère les transformations après /upload/
+    # Ex: https://res.cloudinary.com/xxx/image/upload/v123/folder/img.jpg
+    #  -> https://res.cloudinary.com/xxx/image/upload/w_120,h_120,c_fill,q_auto,f_auto/v123/folder/img.jpg
+    if "/upload/" in url:
+        return url.replace(
+            "/upload/",
+            f"/upload/w_{size},h_{size},c_fill,q_auto,f_auto/",
+            1
+        )
+    return url
+
+
+def render_thumbnails(photos_urls_str, size=120, max_thumbs=4):
+    """Génère le HTML d'une rangée de miniatures cliquables."""
+    if not photos_urls_str:
+        return ""
+    urls = [u.strip() for u in str(photos_urls_str).split("|") if u.strip()]
+    if not urls:
+        return ""
+
+    thumbs_html = []
+    for i, url in enumerate(urls[:max_thumbs]):
+        thumb_url = make_thumbnail_url(url, size=size)
+        full_url = html.escape(url)
+        thumb_url_safe = html.escape(thumb_url)
+        thumbs_html.append(
+            f'<a href="{full_url}" target="_blank" style="display:inline-block; margin-right:6px; margin-top:6px;">'
+            f'<img src="{thumb_url_safe}" style="width:{size//2}px; height:{size//2}px; '
+            f'object-fit:cover; border-radius:8px; border:1px solid #DDD;" />'
+            f'</a>'
+        )
+
+    extra = ""
+    if len(urls) > max_thumbs:
+        extra = f'<span style="font-size:11px; color:#888 !important; margin-left:4px;">+{len(urls) - max_thumbs}</span>'
+
+    return f'<div style="margin-top:6px;">{"".join(thumbs_html)}{extra}</div>'
+
+
 # =========================================================================
 # ÉCRANS
 # =========================================================================
@@ -518,12 +561,14 @@ def screen_home():
             enseigne_safe = html.escape(str(row.get("Enseigne", "")))
             date_safe = html.escape(str(row.get("Date", "")))
             projet_safe = html.escape(str(row.get("Projet", "")))
+            thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
             st.markdown(f"""
             <div class="visit-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div style="flex:1;">
                         <strong>{magasin_safe}</strong> · <span style="color:#888 !important;">{enseigne_safe}</span><br>
                         <span style="font-size:12px; color:#666 !important;">{date_safe} · {projet_safe}</span>
+                        {thumbs_html}
                     </div>
                     <div style="font-size:20px;">{etat_emoji}</div>
                 </div>
@@ -784,12 +829,7 @@ def screen_history():
         date_safe = html.escape(str(row.get("Date", "")))
         heure_safe = html.escape(str(row.get("Heure", "")))
 
-        photos_section = ""
-        if row.get("Photos_URLs"):
-            urls = [u.strip() for u in str(row["Photos_URLs"]).split("|") if u.strip()]
-            if urls:
-                links = " · ".join([f'<a href="{html.escape(u)}" target="_blank" style="color:{PRIMARY_DARK} !important;">📷 Photo {i+1}</a>' for i, u in enumerate(urls)])
-                photos_section = f'<div style="margin-top:8px; font-size:12px;">{links}</div>'
+        photos_section = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=6)
 
         commentaire_section = ""
         if row.get("Commentaire"):
@@ -1013,6 +1053,8 @@ def manage_visits():
                 commentaire_safe = html.escape(truncated)
                 commentaire_html = f'<div style="margin-top:4px; font-size:11px; color:#666 !important; font-style:italic;">💬 {commentaire_safe}</div>'
 
+            thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
+
             st.markdown(f"""
             <div class="visit-card" style="padding:10px 14px;">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -1021,6 +1063,7 @@ def manage_visits():
                         <span style="font-size:11px; color:#666 !important;">{date_safe} {heure_safe} · 👤 {commercial_safe} · ID: <code>{visit_id_safe}</code></span>
                         <div style="margin-top:4px; font-size:12px;">{etat_emoji} {projet_safe}</div>
                         {commentaire_html}
+                        {thumbs_html}
                     </div>
                 </div>
             </div>
