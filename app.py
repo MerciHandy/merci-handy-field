@@ -483,23 +483,20 @@ def render_bar_chart(series, max_items=10):
     for label, value in series.items():
         width_pct = (value / max_val) * 100 if max_val > 0 else 0
         label_safe = html.escape(str(label))
-        bars_html.append(f"""
-        <div style="margin-bottom:10px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                <span style="font-size:13px;color:#2C2C2A;font-weight:500;">{label_safe}</span>
-                <span style="font-size:13px;color:#D88FCE;font-weight:600;">{value}</span>
-            </div>
-            <div style="background:#F5E8F2;border-radius:6px;height:10px;overflow:hidden;">
-                <div style="background:linear-gradient(90deg,#EDADE7 0%,#D88FCE 100%);height:100%;width:{width_pct}%;border-radius:6px;transition:width 0.4s;"></div>
-            </div>
-        </div>
-        """)
+        bar = (
+            f'<div style="margin-bottom:10px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+            f'<span style="font-size:13px;color:#2C2C2A;font-weight:500;">{label_safe}</span>'
+            f'<span style="font-size:13px;color:#D88FCE;font-weight:600;">{value}</span>'
+            f'</div>'
+            f'<div style="background:#F5E8F2;border-radius:6px;height:10px;overflow:hidden;">'
+            f'<div style="background:linear-gradient(90deg,#EDADE7 0%,#D88FCE 100%);height:100%;width:{width_pct}%;border-radius:6px;"></div>'
+            f'</div></div>'
+        )
+        bars_html.append(bar)
 
-    html_content = "".join(bars_html)
-    st.markdown(
-        f'<div style="background:#FFFFFF;padding:16px 20px;border-radius:12px;border:1px solid #EEE;margin-bottom:16px;">{html_content}</div>',
-        unsafe_allow_html=True
-    )
+    full = f'<div style="background:#FFFFFF;padding:16px 20px;border-radius:12px;border:1px solid #EEE;margin-bottom:16px;">{"".join(bars_html)}</div>'
+    st.markdown(full, unsafe_allow_html=True)
 
 
 def render_thumbnails(photos_urls_str, size=120, max_thumbs=4, display_size=72):
@@ -591,18 +588,18 @@ def screen_home():
             date_safe = html.escape(str(row.get("Date", "")))
             projet_safe = html.escape(str(row.get("Projet", "")))
             thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
-            st.markdown(f"""
-            <div class="visit-card">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                    <div style="flex:1;">
-                        <strong>{magasin_safe}</strong> · <span style="color:#888 !important;">{enseigne_safe}</span><br>
-                        <span style="font-size:12px; color:#666 !important;">{date_safe} · {projet_safe}</span>
-                        {thumbs_html}
-                    </div>
-                    <div style="font-size:20px;">{etat_emoji}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            card_html = (
+                f'<div class="visit-card">'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+                f'<div style="flex:1;">'
+                f'<strong>{magasin_safe}</strong> · <span style="color:#888;">{enseigne_safe}</span><br>'
+                f'<span style="font-size:12px;color:#666;">{date_safe} · {projet_safe}</span>'
+                f'{thumbs_html}'
+                f'</div>'
+                f'<div style="font-size:20px;">{etat_emoji}</div>'
+                f'</div></div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
 
     st.write("")
     col_a, col_b = st.columns(2)
@@ -863,27 +860,26 @@ def screen_history():
         commentaire_section = ""
         if row.get("Commentaire"):
             commentaire_safe = html.escape(str(row["Commentaire"]))
-            commentaire_section = f'<div style="margin-top:6px; font-size:12px; color:#666 !important; font-style:italic;">💬 {commentaire_safe}</div>'
+            commentaire_section = f'<div style="margin-top:6px;font-size:12px;color:#666;font-style:italic;">💬 {commentaire_safe}</div>'
 
         adresse_section = ""
         if row.get("Adresse_complete"):
             adresse_safe = html.escape(str(row["Adresse_complete"]))
-            adresse_section = f'<div style="margin-top:4px; font-size:11px; color:#888 !important;">📍 {adresse_safe}</div>'
+            adresse_section = f'<div style="margin-top:4px;font-size:11px;color:#888;">📍 {adresse_safe}</div>'
 
-        st.markdown(f"""
-        <div class="visit-card">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                <div style="flex:1;">
-                    <strong>{magasin_safe}</strong> · <span style="color:#888 !important;">{enseigne_safe} — {ville_safe}</span><br>
-                    <span style="font-size:12px; color:#666 !important;">{date_safe} {heure_safe} · {projet_safe}</span>
-                    <div style="margin-top:6px; font-size:13px;">{etat_safe}</div>
-                    {adresse_section}
-                    {commentaire_section}
-                    {photos_section}
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        card_html = (
+            f'<div class="visit-card">'
+            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+            f'<div style="flex:1;">'
+            f'<strong>{magasin_safe}</strong> · <span style="color:#888;">{enseigne_safe} — {ville_safe}</span><br>'
+            f'<span style="font-size:12px;color:#666;">{date_safe} {heure_safe} · {projet_safe}</span>'
+            f'<div style="margin-top:6px;font-size:13px;">{etat_safe}</div>'
+            f'{adresse_section}'
+            f'{commentaire_section}'
+            f'{photos_section}'
+            f'</div></div></div>'
+        )
+        st.markdown(card_html, unsafe_allow_html=True)
 
 
 def screen_dashboard():
@@ -1081,23 +1077,22 @@ def manage_visits():
                 comment_str = str(row["Commentaire"])
                 truncated = comment_str[:80] + ("…" if len(comment_str) > 80 else "")
                 commentaire_safe = html.escape(truncated)
-                commentaire_html = f'<div style="margin-top:4px; font-size:11px; color:#666 !important; font-style:italic;">💬 {commentaire_safe}</div>'
+                commentaire_html = f'<div style="margin-top:4px;font-size:11px;color:#666;font-style:italic;">💬 {commentaire_safe}</div>'
 
             thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
 
-            st.markdown(f"""
-            <div class="visit-card" style="padding:10px 14px;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                    <div style="flex:1;">
-                        <strong>{magasin_safe}</strong> · <span style="color:#888 !important;">{enseigne_safe} — {ville_safe}</span><br>
-                        <span style="font-size:11px; color:#666 !important;">{date_safe} {heure_safe} · 👤 {commercial_safe} · ID: <code>{visit_id_safe}</code></span>
-                        <div style="margin-top:4px; font-size:12px;">{etat_emoji} {projet_safe}</div>
-                        {commentaire_html}
-                        {thumbs_html}
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            card_html = (
+                f'<div class="visit-card" style="padding:10px 14px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+                f'<div style="flex:1;">'
+                f'<strong>{magasin_safe}</strong> · <span style="color:#888;">{enseigne_safe} — {ville_safe}</span><br>'
+                f'<span style="font-size:11px;color:#666;">{date_safe} {heure_safe} · 👤 {commercial_safe} · ID: <code>{visit_id_safe}</code></span>'
+                f'<div style="margin-top:4px;font-size:12px;">{etat_emoji} {projet_safe}</div>'
+                f'{commentaire_html}'
+                f'{thumbs_html}'
+                f'</div></div></div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
 
         with col_btn:
             if pending_delete == visit_id:
