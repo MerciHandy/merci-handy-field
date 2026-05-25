@@ -15,7 +15,7 @@ import uuid
 import requests
 import time
 import html
-from PIL import Image
+from PIL import Image, ImageOps
 from streamlit_geolocation import streamlit_geolocation
 import cloudinary
 import cloudinary.uploader
@@ -548,9 +548,16 @@ def remove_from_config(name, value, default_values):
 
 
 def compress_image(photo_file, max_size_kb=800, max_dimension=1600):
-    """Compresse une photo pour upload rapide et fiable."""
+    """Compresse une photo pour upload rapide et fiable.
+
+    Applique aussi la rotation EXIF physique sur les pixels (iPhone/Android
+    photographient souvent en paysage avec un tag EXIF "rotation 90°"). Sans
+    ça, PIL strip l'EXIF au save et Cloudinary reçoit une photo de travers.
+    """
     try:
         img = Image.open(io.BytesIO(photo_file.getvalue()))
+        # Rotation physique selon EXIF (avant tout autre traitement)
+        img = ImageOps.exif_transpose(img)
         if img.mode in ("RGBA", "LA", "P"):
             background = Image.new("RGB", img.size, (255, 255, 255))
             if img.mode == "P":
