@@ -78,6 +78,9 @@ universe_domain = "googleapis.com"
 cloud_name = "ton_cloud_name"
 api_key = "123456789012345"
 api_secret = "abcDEF..."
+
+# Optionnel — notif Slack a chaque nouvelle visite (dans #fr-field par exemple)
+slack_webhook_url = "https://hooks.slack.com/services/T.../B.../xxxx"
 ```
 
 > **Comment remplir `[gcp_service_account]`** : ouvre le fichier `.json` téléchargé à l'étape 1.5 — chaque champ correspond. Recopie tel quel. Pour `private_key`, garde les `\n` tels quels et entoure de guillemets droits `"..."`.
@@ -130,6 +133,33 @@ streamlit run app.py
 - **Streamlit Community Cloud** : gratuit mais "s'endort" après quelques minutes d'inactivité — premier accès du jour ~10-15 sec.
 - **Stockage photos (Cloudinary gratuit)** : 25 Go + 25k transformations/mois. Avec compression à ~200 Ko/photo, ça fait **~125 000 photos**. Très large.
 - **Mode hors-ligne** : pas natif. Si pas de réseau, prendre photos avec l'appareil photo classique et remplir le formulaire au café après.
+
+---
+
+## 📢 Notifications Slack (optionnel)
+
+À chaque nouvelle visite enregistrée, l'app peut envoyer un message dans un channel Slack avec :
+- Header (rose MH normalement, rouge si rupture détectée)
+- Commercial, enseigne, ville, projet
+- État du linéaire
+- Commentaire (si présent)
+- 1ère photo en miniature
+- Timestamp + ID de la visite
+
+**Setup (3 min) :**
+
+1. Va sur https://api.slack.com/apps → **Create New App** → "From scratch"
+2. Nomme-le `Merci Handy Field` → choisis ton workspace
+3. **Features → Incoming Webhooks** → active le toggle "Activate Incoming Webhooks"
+4. En bas, **Add New Webhook to Workspace** → choisis le channel cible (ex: `#fr-field`) → Allow
+5. **Copie l'URL** générée (du type `https://hooks.slack.com/services/T.../B.../xxx`)
+6. Dans **Streamlit Cloud → Settings → Secrets**, ajoute la ligne :
+   ```toml
+   slack_webhook_url = "https://hooks.slack.com/services/T.../B.../xxx"
+   ```
+7. Save → l'app redémarre, les prochaines visites apparaîtront dans Slack 🎉
+
+Pour désactiver temporairement : supprime juste la ligne `slack_webhook_url` des secrets, l'app continue de marcher normalement.
 
 ---
 

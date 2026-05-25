@@ -657,6 +657,92 @@ def save_visit(visit_data, photo_urls):
     st.cache_data.clear()
 
 
+def notify_slack(visit_data, photo_urls):
+    """Envoie une notif Slack via Incoming Webhook quand une visite est enregistrée.
+
+    Le webhook URL est dans st.secrets["slack_webhook_url"] (optionnel — si absent,
+    on skip silencieusement, l'app continue de fonctionner normalement).
+
+    Format :
+    - Header avec emoji + nom du magasin
+    - Bandeau coloré rose MH par défaut, rouge si rupture détectée
+    - Fields : Commercial / Enseigne / Ville / Projet
+    - État du linéaire
+    - Commentaire (si présent)
+    - 1ère photo en miniature cliquable
+    """
+    try:
+        webhook_url = st.secrets.get("slack_webhook_url", None)
+    except Exception:
+        webhook_url = None
+    if not webhook_url:
+        return  # Pas configuré → on skip sans bruit
+
+    etat_str = ", ".join(visit_data["etat"])
+    is_rupture = "Rupture" in etat_str
+
+    # Header + couleur du bandeau
+    if is_rupture:
+        header_text = f"🚨 RUPTURE — {visit_data['magasin']}"
+        color = "#E53E3E"  # rouge alerte
+    else:
+        header_text = f"📍 Nouvelle visite — {visit_data['magasin']}"
+        color = "#FF6BB8"  # rose Merci Handy
+
+    fields = [
+        {"type": "mrkdwn", "text": f"*👤 Commercial*\n{visit_data['commercial']}"},
+        {"type": "mrkdwn", "text": f"*🏪 Enseigne*\n{visit_data['enseigne']}"},
+        {"type": "mrkdwn", "text": f"*📍 Ville*\n{visit_data['ville']}"},
+        {"type": "mrkdwn", "text": f"*🚀 Projet*\n{visit_data['projet']}"},
+    ]
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": header_text, "emoji": True}},
+        {"type": "section", "fields": fields},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*État:* {etat_str}"}},
+    ]
+
+    if visit_data.get("commentaire"):
+        comment_safe = visit_data["commentaire"][:300]
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"💬 _{comment_safe}_"},
+        })
+
+    # Mini-photo en aperçu (la première de la visite)
+    if photo_urls:
+        preview_url = make_thumbnail_url(photo_urls[0], size=600)
+        blocks.append({
+            "type": "image",
+            "image_url": preview_url,
+            "alt_text": f"Photo de {visit_data['magasin']}",
+        })
+
+    blocks.append({
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": f"🕒 {visit_data['date']} {visit_data['heure']} · ID: `{visit_data['id']}`",
+        }],
+    })
+
+    # On wrap dans un attachment pour avoir le bandeau coloré à gauche
+    payload = {
+        "attachments": [{
+            "color": color,
+            "blocks": blocks,
+        }]
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=5)
+        if resp.status_code != 200:
+            # Échec silencieux côté UI utilisateur — on ne veut pas casser la sauvegarde
+            print(f"[Slack notif] HTTP {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        print(f"[Slack notif] Exception: {e}")
+
+
 def delete_visit_by_id(visit_id):
     """Supprime une visite par son ID dans la Sheet."""
     sheet = get_visits_sheet()
@@ -1031,6 +1117,8 @@ def screen_new_visit():
                     "adresse": st.session_state.get("geo_address", ""),
                 }
                 save_visit(visit_data, photo_urls)
+                # Notif Slack (best-effort — n'interrompt jamais la sauvegarde)
+                notify_slack(visit_data, photo_urls)
 
             if photos_failed > 0:
                 st.success(f"✅ Visite enregistrée — {len(photo_urls)} photo(s) ok, {photos_failed} échec(s).")
