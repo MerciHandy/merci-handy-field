@@ -8,4 +8,4 @@ streamlit-geolocation
 requests
 Pillow
 cloudinary
- 
+streamlit-local-storage

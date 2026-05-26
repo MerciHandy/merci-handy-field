@@ -19,6 +19,7 @@ from PIL import Image, ImageOps
 from streamlit_geolocation import streamlit_geolocation
 import cloudinary
 import cloudinary.uploader
+from streamlit_local_storage import LocalStorage
 
 # =========================================================================
 # CONFIGURATION
@@ -850,6 +851,21 @@ def render_thumbnails(photos_urls_str, size=120, max_thumbs=4, display_size=72):
 # ÉCRANS
 # =========================================================================
 
+def _save_commercial(nom):
+    """Stocke le nom dans session_state ET dans localStorage du navigateur."""
+    nom = nom.strip()
+    if not nom:
+        return False
+    st.session_state.commercial = nom
+    try:
+        ls = st.session_state.get("_local_storage")
+        if ls is not None:
+            ls.setItem("mh_commercial", nom)
+    except Exception:
+        pass
+    return True
+
+
 def screen_login():
     st.markdown(
         '<div class="main-header">'
@@ -859,11 +875,36 @@ def screen_login():
         unsafe_allow_html=True
     )
     st.write("")
-    st.markdown("**Hello toi !** 👋 Dis-moi ton prénom pour commencer.")
-    nom = st.text_input("Ton prénom", placeholder="Ex : Léa", label_visibility="collapsed")
+    st.markdown("**Hello toi !** 👋 Qui es-tu ?")
+    st.caption("Tu sélectionnes une fois, ton navigateur s'en souvient pour toujours ✨")
+
+    # Liste des commerciaux déjà connus (extraite de la Sheet existante)
+    try:
+        df_all = load_visits()
+        known = sorted(df_all["Commercial"].dropna().unique().tolist()) if "Commercial" in df_all.columns else []
+    except Exception:
+        known = []
+
+    if known:
+        st.markdown("**Choisis ton prénom :**")
+        # Affichage en grille de boutons (2 colonnes)
+        cols_per_row = 2
+        for i in range(0, len(known), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, nom in enumerate(known[i:i + cols_per_row]):
+                with cols[j]:
+                    if st.button(f"👤 {nom}", use_container_width=True, key=f"login_{nom}"):
+                        if _save_commercial(nom):
+                            st.rerun()
+        st.write("")
+        st.markdown("---")
+        st.markdown("**Ou nouveau membre de l'équipe ?** Tape ton prénom :")
+    else:
+        st.markdown("**Tape ton prénom :**")
+
+    nom = st.text_input("Ton prénom", placeholder="Ex : Léa", label_visibility="collapsed", key="new_user_input")
     if st.button("Let's go 🚀", use_container_width=True, type="primary"):
-        if nom.strip():
-            st.session_state.commercial = nom.strip()
+        if _save_commercial(nom):
             st.rerun()
         else:
             st.warning("Indique ton prénom pour continuer.")
@@ -951,6 +992,12 @@ def screen_home():
             st.rerun()
     with col_d:
         if st.button("👋 Changer d'utilisateur", use_container_width=True):
+            try:
+                ls = st.session_state.get("_local_storage")
+                if ls is not None:
+                    ls.deleteItem("mh_commercial")
+            except Exception:
+                pass
             del st.session_state.commercial
             if "screen" in st.session_state:
                 del st.session_state.screen
@@ -1599,6 +1646,24 @@ def manage_list(name, defaults, with_emoji_hint=False):
 # =========================================================================
 # ROUTING
 # =========================================================================
+
+# Init du LocalStorage (1 seule fois par session)
+if "_local_storage" not in st.session_state:
+    try:
+        st.session_state._local_storage = LocalStorage()
+    except Exception:
+        st.session_state._local_storage = None
+
+# Auto-login depuis le navigateur si déjà mémorisé
+if "commercial" not in st.session_state:
+    try:
+        ls = st.session_state.get("_local_storage")
+        if ls is not None:
+            saved_name = ls.getItem("mh_commercial")
+            if saved_name and isinstance(saved_name, str) and saved_name.strip():
+                st.session_state.commercial = saved_name.strip()
+    except Exception:
+        pass
 
 if "commercial" not in st.session_state:
     screen_login()
