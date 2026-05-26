@@ -1354,7 +1354,7 @@ def screen_admin():
 
     st.write("")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Visites", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Visites", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
 
     with tab1:
         manage_visits()
@@ -1364,6 +1364,99 @@ def screen_admin():
         manage_list("Projets", DEFAULT_PROJETS)
     with tab4:
         manage_list("Etats", DEFAULT_ETATS, with_emoji_hint=True)
+    with tab5:
+        manage_slack_test()
+
+
+def manage_slack_test():
+    """Diagnostic Slack : vérifie le secret + permet d'envoyer un message de test."""
+    st.markdown("### 🔔 Diagnostic notification Slack")
+    st.caption("Vérifie ici que la notif Slack à chaque nouvelle visite fonctionne bien.")
+
+    # 1. Vérif du secret
+    try:
+        webhook_url = st.secrets.get("slack_webhook_url", None)
+    except Exception as e:
+        webhook_url = None
+        st.error(f"❌ Erreur de lecture des secrets : {e}")
+        return
+
+    st.markdown("#### 1️⃣ État du secret")
+    if not webhook_url:
+        st.error(
+            "❌ **`slack_webhook_url` introuvable dans les secrets Streamlit.**\n\n"
+            "Va sur share.streamlit.io → ton app → Settings → Secrets, "
+            "et ajoute (à la racine, **pas** dans une section) :\n\n"
+            "```toml\nslack_webhook_url = \"https://hooks.slack.com/services/T.../B.../xxx\"\n```\n\n"
+            "Puis Save → reboot l'app."
+        )
+        return
+
+    if not webhook_url.startswith("https://hooks.slack.com/"):
+        st.warning(
+            f"⚠️ L'URL trouvée ne ressemble pas à un webhook Slack standard "
+            f"(commence par `{webhook_url[:30]}...`). Vérifie que c'est bien une URL "
+            f"Slack Incoming Webhook."
+        )
+    else:
+        masked = webhook_url[:38] + "•" * 8 + webhook_url[-6:]
+        st.success(f"✅ Secret trouvé : `{masked}`")
+
+    # 2. Bouton de test
+    st.markdown("#### 2️⃣ Envoyer un message de test")
+    st.caption("Envoie un message simple dans ton channel Slack pour valider que le webhook fonctionne.")
+
+    if st.button("📤 Envoyer un test à Slack", type="primary"):
+        test_payload = {
+            "attachments": [{
+                "color": "#FF6BB8",
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {"type": "plain_text", "text": "💖 Test Merci Handy Field", "emoji": True},
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "Si tu vois ce message, le webhook fonctionne correctement ✅\n\n"
+                                    "Tu peux maintenant enregistrer une vraie visite, "
+                                    "la notif arrivera ici automatiquement.",
+                        },
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": "🧪 Message de test envoyé depuis l'écran Admin"}],
+                    },
+                ],
+            }]
+        }
+
+        with st.spinner("Envoi en cours..."):
+            try:
+                resp = requests.post(webhook_url, json=test_payload, timeout=10)
+                if resp.status_code == 200 and resp.text.strip() == "ok":
+                    st.success(
+                        "✅ **Message envoyé avec succès !**\n\n"
+                        "Va vérifier dans ton channel Slack (#fr-field normalement). "
+                        "Si tu vois bien le message, les notifs de visites fonctionneront aussi."
+                    )
+                else:
+                    st.error(
+                        f"❌ **Slack a refusé le message.**\n\n"
+                        f"- Code HTTP : `{resp.status_code}`\n"
+                        f"- Réponse : `{resp.text[:300]}`\n\n"
+                        f"**Causes courantes :**\n"
+                        f"- `invalid_payload` → problème de format (rare ici)\n"
+                        f"- `channel_not_found` → le channel a été supprimé ou renommé\n"
+                        f"- `no_service` ou `no_team` → le webhook a été supprimé côté Slack, "
+                        f"il faut le recréer sur api.slack.com\n"
+                        f"- `404` → URL incorrecte ou tronquée"
+                    )
+            except requests.exceptions.Timeout:
+                st.error("❌ Timeout — Slack n'a pas répondu en 10 secondes. Réessaie.")
+            except Exception as e:
+                st.error(f"❌ Erreur réseau ou Python : `{e}`")
 
 
 def manage_visits():
