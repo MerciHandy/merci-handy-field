@@ -710,14 +710,25 @@ def notify_slack(visit_data, photo_urls):
             "text": {"type": "mrkdwn", "text": f"💬 _{comment_safe}_"},
         })
 
-    # Mini-photo en aperçu (la première de la visite)
+    # Photos en petites vignettes empilées (jusqu'à 4), pas une seule en grand
     if photo_urls:
-        preview_url = make_thumbnail_url(photo_urls[0], size=600)
-        blocks.append({
-            "type": "image",
-            "image_url": preview_url,
-            "alt_text": f"Photo de {visit_data['magasin']}",
-        })
+        max_photos = 4
+        for i, url in enumerate(photo_urls[:max_photos]):
+            thumb_url = make_thumbnail_url(url, size=300)
+            blocks.append({
+                "type": "image",
+                "image_url": thumb_url,
+                "alt_text": f"Photo {i+1} de {visit_data['magasin']}",
+            })
+        remaining = len(photo_urls) - max_photos
+        if remaining > 0:
+            blocks.append({
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": f"📸 +{remaining} autre(s) photo(s) dans la fiche visite",
+                }],
+            })
 
     blocks.append({
         "type": "context",
