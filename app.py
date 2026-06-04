@@ -1412,8 +1412,10 @@ def screen_admin():
 
     st.write("")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Visites", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
+    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Analyses", "📋 Visites", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
 
+    with tab0:
+        manage_analytics()
     with tab1:
         manage_visits()
     with tab2:
@@ -1424,6 +1426,255 @@ def screen_admin():
         manage_list("Etats", DEFAULT_ETATS, with_emoji_hint=True)
     with tab5:
         manage_slack_test()
+
+
+# =========================================================================
+# ANALYSES ADMIN
+# =========================================================================
+
+MOIS_FR = {
+    "01": "Janv", "02": "Févr", "03": "Mars", "04": "Avril",
+    "05": "Mai", "06": "Juin", "07": "Juil", "08": "Août",
+    "09": "Sept", "10": "Oct", "11": "Nov", "12": "Déc",
+}
+
+
+def split_etats(etat_str):
+    """Découpe la colonne Etat (valeurs multiples séparées par des virgules)."""
+    if etat_str is None or (isinstance(etat_str, float) and pd.isna(etat_str)):
+        return []
+    return [e.strip() for e in str(etat_str).split(",") if e.strip()]
+
+
+def etat_color(etat):
+    """Couleur associée à un état de linéaire."""
+    if "OK" in etat or "✅" in etat:
+        return ACCENT_MINT
+    if "Rupture" in etat or "❌" in etat:
+        return ACCENT_CORAL
+    if "⚠️" in etat:
+        return ACCENT_YELLOW
+    if "📍" in etat:
+        return ACCENT_BLUE
+    if "🎨" in etat:
+        return ACCENT_PURPLE
+    return PRIMARY
+
+
+def is_problem_etat(etat):
+    """Un état est un 'souci' s'il ne contient pas 'OK' (facing, rupture, PLV…)."""
+    return "OK" not in etat
+
+
+def render_pct_rows(rows):
+    """Carte blanche avec rangées label / valeur / barre de progression.
+
+    rows = liste de dicts : label, pct (largeur barre 0-100), value (gros chiffre
+    affiché à droite), detail (texte gris), color.
+    """
+    parts = []
+    for r in rows:
+        label_safe = html.escape(str(r["label"]))
+        detail_safe = html.escape(str(r.get("detail", "")))
+        value_safe = html.escape(str(r.get("value", "")))
+        color = r["color"]
+        pct = max(0, min(100, r["pct"]))
+        parts.append(
+            f'<div style="margin-bottom:13px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;gap:10px;">'
+            f'<span style="font-size:13px;color:{TEXT_DARK};font-weight:600;">{label_safe}</span>'
+            f'<span style="font-size:11.5px;color:{TEXT_SOFT};font-weight:600;text-align:right;white-space:nowrap;">'
+            f'<span style="font-size:15px;color:{color};font-weight:700;">{value_safe}</span> · {detail_safe}</span>'
+            f'</div>'
+            f'<div style="background:{BG_SOFT};border-radius:8px;height:12px;overflow:hidden;border:1px solid {BORDER_SOFT};">'
+            f'<div style="background:linear-gradient(90deg,{color} 0%,{color}cc 100%);height:100%;width:{pct:.1f}%;border-radius:8px;box-shadow:0 1px 3px {color}44;"></div>'
+            f'</div></div>'
+        )
+    full = f'<div style="background:{BG_LIGHT};padding:20px 22px;border-radius:18px;border:2px solid {BORDER_SOFT};margin-bottom:16px;box-shadow:0 2px 8px rgba(255,107,184,0.06);">{"".join(parts)}</div>'
+    st.markdown(full, unsafe_allow_html=True)
+
+
+def render_donut(counts_colors, center_label, center_value):
+    """Donut CSS (conic-gradient) + légende. counts_colors = [(label, count, color)]."""
+    total = sum(c for _, c, _ in counts_colors)
+    if total == 0:
+        st.info("Aucune donnée à afficher.")
+        return
+    segments = []
+    cursor = 0.0
+    for _, count, color in counts_colors:
+        end = cursor + count / total * 360
+        segments.append(f"{color} {cursor:.1f}deg {end:.1f}deg")
+        cursor = end
+    gradient = ", ".join(segments)
+    legend_parts = []
+    for label, count, color in counts_colors:
+        pct = count / total * 100
+        label_safe = html.escape(str(label))
+        legend_parts.append(
+            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">'
+            f'<span style="width:12px;height:12px;border-radius:4px;background:{color};display:inline-block;flex-shrink:0;"></span>'
+            f'<span style="font-size:12.5px;color:{TEXT_DARK};font-weight:600;flex:1;">{label_safe}</span>'
+            f'<span style="font-size:13px;color:{color};font-weight:700;">{pct:.0f}%</span>'
+            f'<span style="font-size:11px;color:{TEXT_SOFT};">({count})</span>'
+            f'</div>'
+        )
+    donut_html = (
+        f'<div style="background:{BG_LIGHT};padding:22px;border-radius:18px;border:2px solid {BORDER_SOFT};margin-bottom:16px;box-shadow:0 2px 8px rgba(255,107,184,0.06);display:flex;align-items:center;gap:24px;flex-wrap:wrap;">'
+        f'<div style="width:150px;height:150px;border-radius:50%;background:conic-gradient({gradient});display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 14px rgba(255,107,184,0.15);">'
+        f'<div style="width:92px;height:92px;border-radius:50%;background:{BG_LIGHT};display:flex;flex-direction:column;align-items:center;justify-content:center;">'
+        f'<span style="font-size:24px;font-weight:700;font-family:Fredoka,sans-serif;color:{TEXT_DARK};line-height:1;">{html.escape(str(center_value))}</span>'
+        f'<span style="font-size:9.5px;color:{TEXT_SOFT};text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-top:3px;text-align:center;">{html.escape(str(center_label))}</span>'
+        f'</div></div>'
+        f'<div style="flex:1;min-width:200px;">{"".join(legend_parts)}</div>'
+        f'</div>'
+    )
+    st.markdown(donut_html, unsafe_allow_html=True)
+
+
+def manage_analytics():
+    """Dashboards de pilotage : enseignes, états des linéaires, commerciaux, tendances."""
+    df = load_visits()
+    if df.empty:
+        st.info("Aucune visite enregistrée pour le moment.")
+        return
+
+    # ---- Filtre période ----
+    period = st.selectbox(
+        "📅 Période analysée",
+        ["Tout l'historique", "Ce mois-ci", "30 derniers jours", "3 derniers mois"],
+        key="analytics_period",
+    )
+    dates = pd.to_datetime(df["Date"], errors="coerce")
+    now = pd.Timestamp.now()
+    if period == "Ce mois-ci":
+        mask = dates.dt.strftime("%Y-%m") == now.strftime("%Y-%m")
+    elif period == "30 derniers jours":
+        mask = dates >= now - pd.Timedelta(days=30)
+    elif period == "3 derniers mois":
+        mask = dates >= now - pd.Timedelta(days=91)
+    else:
+        mask = pd.Series(True, index=df.index)
+    df = df[mask]
+    if df.empty:
+        st.info("Aucune visite sur cette période.")
+        return
+
+    # Clé magasin unique (enseigne + nom + ville, insensible à la casse)
+    store_key = (
+        df["Enseigne"].astype(str).str.strip().str.lower() + "|"
+        + df["Magasin"].astype(str).str.strip().str.lower() + "|"
+        + df["Ville"].astype(str).str.strip().str.lower()
+    )
+    df = df.assign(_store=store_key)
+    palette = [PRIMARY, ACCENT_CORAL, ACCENT_YELLOW, ACCENT_MINT, ACCENT_BLUE, ACCENT_PURPLE]
+
+    # ---- KPIs ----
+    total = len(df)
+    stores_total = df["_store"].nunique()
+    etat_series = df["Etat"].astype(str)
+    pct_ok = etat_series.str.contains("OK", na=False).sum() / total * 100
+    pct_rupture = etat_series.str.contains("Rupture", na=False).sum() / total * 100
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f'<div class="stat-card pink"><div class="stat-number">{total}</div><div class="stat-label">Visites</div></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'<div class="stat-card blue"><div class="stat-number">{stores_total}</div><div class="stat-label">Magasins uniques</div></div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown(f'<div class="stat-card mint"><div class="stat-number">{pct_ok:.0f}%</div><div class="stat-label">Linéaires OK</div></div>', unsafe_allow_html=True)
+    with c4:
+        st.markdown(f'<div class="stat-card coral"><div class="stat-number">{pct_rupture:.0f}%</div><div class="stat-label">Ruptures</div></div>', unsafe_allow_html=True)
+
+    st.write("")
+
+    # ---- 1. % de visites par enseigne ----
+    st.markdown('<div class="section-title">🏪 % de visites par enseigne</div>', unsafe_allow_html=True)
+    st.caption("Part de chaque enseigne dans les visites + nombre de magasins différents couverts.")
+    by_enseigne = df["Enseigne"].value_counts()
+    stores_by_enseigne = df.groupby("Enseigne")["_store"].nunique()
+    rows = []
+    for i, (enseigne, count) in enumerate(by_enseigne.items()):
+        pct = count / total * 100
+        rows.append({
+            "label": enseigne,
+            "pct": pct,
+            "value": f"{pct:.0f}%",
+            "detail": f"{count} visite(s) · {stores_by_enseigne.get(enseigne, 0)} magasin(s)",
+            "color": palette[i % len(palette)],
+        })
+    render_pct_rows(rows)
+
+    # ---- 2. État des linéaires (donut) ----
+    st.markdown('<div class="section-title">📋 État des linéaires</div>', unsafe_allow_html=True)
+    st.caption("Répartition de tous les constats relevés en visite (plusieurs possibles par visite).")
+    all_etats = []
+    for e in df["Etat"]:
+        all_etats.extend(split_etats(e))
+    if all_etats:
+        etat_counts = pd.Series(all_etats).value_counts()
+        counts_colors = [(etat, int(cnt), etat_color(etat)) for etat, cnt in etat_counts.items()]
+        render_donut(counts_colors, "constats", int(etat_counts.sum()))
+    else:
+        st.info("Aucun état renseigné.")
+
+    # ---- 3. Taux de problème par enseigne ----
+    st.markdown('<div class="section-title">⚠️ Taux de problème par enseigne</div>', unsafe_allow_html=True)
+    st.caption("Part des visites avec au moins un souci (facing, rupture, emplacement, PLV…). Vert = sain, rouge = à surveiller.")
+    problem_mask = df["Etat"].apply(lambda e: any(is_problem_etat(x) for x in split_etats(e)))
+    rows = []
+    for enseigne, count in by_enseigne.items():
+        idx = df.index[df["Enseigne"] == enseigne]
+        nb_pb = int(problem_mask[idx].sum())
+        pct_pb = nb_pb / count * 100 if count else 0
+        color = ACCENT_MINT if pct_pb < 25 else (ACCENT_YELLOW if pct_pb < 50 else ACCENT_CORAL)
+        rows.append({
+            "label": enseigne,
+            "pct": pct_pb,
+            "value": f"{pct_pb:.0f}%",
+            "detail": f"{nb_pb}/{count} visite(s) avec souci",
+            "color": color,
+        })
+    render_pct_rows(rows)
+
+    # ---- 4. Activité par commercial ----
+    st.markdown('<div class="section-title">👤 Activité par commercial</div>', unsafe_allow_html=True)
+    by_com = df.groupby("Commercial").agg(visites=("_store", "size"), magasins=("_store", "nunique")).sort_values("visites", ascending=False)
+    ruptures_by_com = df[etat_series.str.contains("Rupture", na=False)].groupby("Commercial").size()
+    max_v = by_com["visites"].max()
+    rows = []
+    for i, (com, r) in enumerate(by_com.iterrows()):
+        rows.append({
+            "label": f"👤 {com}",
+            "pct": r["visites"] / max_v * 100 if max_v else 0,
+            "value": int(r["visites"]),
+            "detail": f"{r['magasins']} magasin(s) · {int(ruptures_by_com.get(com, 0))} rupture(s) signalée(s)",
+            "color": palette[i % len(palette)],
+        })
+    render_pct_rows(rows)
+
+    # ---- 5. Tendance mensuelle ----
+    st.markdown('<div class="section-title">📈 Tendance mensuelle</div>', unsafe_allow_html=True)
+    months = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%Y-%m").dropna()
+    by_month = months.value_counts().sort_index().tail(6)
+    if not by_month.empty:
+        max_m = by_month.max()
+        rows = []
+        for i, (month, count) in enumerate(by_month.items()):
+            label = f"{MOIS_FR.get(month[5:7], month[5:7])} {month[:4]}"
+            rows.append({
+                "label": label,
+                "pct": count / max_m * 100 if max_m else 0,
+                "value": int(count),
+                "detail": "visite(s)",
+                "color": palette[i % len(palette)],
+            })
+        render_pct_rows(rows)
+
+    # ---- 6. Top villes ----
+    st.markdown('<div class="section-title">🏙️ Top villes</div>', unsafe_allow_html=True)
+    by_ville = df["Ville"].astype(str).str.strip().str.title().value_counts().head(8)
+    render_bar_chart(by_ville)
 
 
 def manage_slack_test():
