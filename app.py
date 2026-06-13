@@ -74,6 +74,23 @@ SHEET_COLUMNS = [
     "Latitude", "Longitude", "Adresse_complete"
 ]
 
+# =========================================================================
+# DÉMARCHAGE (prospection) — onglet séparé, ce ne sont PAS des clients
+# =========================================================================
+PROSPECT_SHEET_NAME = "Démarchage"
+PROSPECT_COLUMNS = [
+    "ID", "Date", "Heure", "Commercial", "Enseigne", "Magasin",
+    "Ville", "Statut", "Notes", "Photos_URLs",
+    "Latitude", "Longitude", "Adresse_complete"
+]
+DEFAULT_STATUTS_PROSPECT = [
+    "🆕 Premier contact",
+    "🔁 À recontacter",
+    "👍 Intéressé",
+    "🙅 Pas intéressé",
+    "⭐ Devenu client",
+]
+
 DEFAULT_ADMIN_PASSWORD = "mercihandy2026"
 
 # =========================================================================
@@ -658,6 +675,64 @@ def save_visit(visit_data, photo_urls):
     st.cache_data.clear()
 
 
+# ============= DÉMARCHAGE (prospection) =============
+
+@st.cache_resource
+def get_prospects_sheet():
+    wb = get_workbook()
+    try:
+        sheet = wb.worksheet(PROSPECT_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        sheet = wb.add_worksheet(title=PROSPECT_SHEET_NAME, rows=1000, cols=len(PROSPECT_COLUMNS))
+        sheet.append_row(PROSPECT_COLUMNS)
+        return sheet
+    try:
+        existing = sheet.row_values(1)
+        if not existing:
+            sheet.append_row(PROSPECT_COLUMNS)
+        elif len(existing) < len(PROSPECT_COLUMNS):
+            for i, col in enumerate(PROSPECT_COLUMNS):
+                if i >= len(existing):
+                    sheet.update_cell(1, i + 1, col)
+    except Exception:
+        pass
+    return sheet
+
+
+@st.cache_data(ttl=60)
+def load_prospects():
+    sheet = get_prospects_sheet()
+    data = sheet.get_all_records()
+    if not data:
+        return pd.DataFrame(columns=PROSPECT_COLUMNS)
+    return pd.DataFrame(data)
+
+
+def save_prospect(data, photo_urls):
+    sheet = get_prospects_sheet()
+    row = [
+        data["id"], data["date"], data["heure"], data["commercial"],
+        data["enseigne"], data["magasin"], data["ville"], data["statut"],
+        data["notes"], " | ".join(photo_urls),
+        data.get("latitude", ""), data.get("longitude", ""), data.get("adresse", ""),
+    ]
+    sheet.append_row(row)
+    st.cache_data.clear()
+
+
+def prospect_history_for(magasin_name):
+    """Renvoie l'historique des passages de démarchage pour un magasin donné
+    (mémoire : se souvenir du merch même si ce n'est pas un client)."""
+    df = load_prospects()
+    if df.empty or not magasin_name or "Magasin" not in df.columns:
+        return df.iloc[0:0] if not df.empty else df
+    mask = df["Magasin"].astype(str).str.strip().str.lower() == magasin_name.strip().lower()
+    hist = df[mask]
+    if hist.empty:
+        return hist
+    return hist.sort_values(by=["Date", "Heure"], ascending=False)
+
+
 def notify_slack(visit_data, photo_urls):
     """Envoie une notif Slack via Incoming Webhook quand une visite est enregistrée.
 
@@ -957,6 +1032,12 @@ def screen_home():
             st.session_state.pop(k, None)
         st.rerun()
 
+    if st.button("🔍  Démarchage (prospection)", use_container_width=True):
+        st.session_state.screen = "prospect_home"
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
     st.write("")
     st.markdown('<div class="section-title">📋 Tes 10 dernières visites</div>', unsafe_allow_html=True)
 
@@ -1186,6 +1267,249 @@ def screen_new_visit():
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "home"
+            st.rerun()
+
+
+def screen_prospect_home():
+    df = load_prospects()
+    df_user = df[df["Commercial"] == st.session_state.commercial] if ("Commercial" in df.columns and not df.empty) else df
+
+    st.markdown(
+        '<div class="main-header">'
+        '<h1>🔍 Démarchage</h1>'
+        '<p>Tes prospects — ce ne sont pas (encore) des clients</p>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    if st.button("← Retour à l'accueil"):
+        st.session_state.screen = "home"
+        st.rerun()
+
+    # Stats
+    nb_total = len(df_user)
+    nb_magasins = df_user["Magasin"].astype(str).str.strip().str.lower().nunique() if (not df_user.empty and "Magasin" in df_user.columns) else 0
+    nb_month = 0
+    if not df_user.empty and "Date" in df_user.columns:
+        dts = pd.to_datetime(df_user["Date"], errors="coerce")
+        current_month = datetime.now().strftime("%Y-%m")
+        nb_month = (dts.dt.strftime("%Y-%m") == current_month).sum()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f'<div class="stat-card purple"><div class="stat-number">{nb_month}</div><div class="stat-label">Ce mois</div></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="stat-card blue"><div class="stat-number">{nb_magasins}</div><div class="stat-label">Magasins</div></div>', unsafe_allow_html=True)
+    with col3:
+        st.markdown(f'<div class="stat-card mint"><div class="stat-number">{nb_total}</div><div class="stat-label">Passages</div></div>', unsafe_allow_html=True)
+
+    st.write("")
+    if st.button("➕  Nouveau démarchage", use_container_width=True, type="primary"):
+        st.session_state.screen = "new_prospect"
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    st.write("")
+    st.markdown('<div class="section-title">🗂️ Tes 10 derniers passages</div>', unsafe_allow_html=True)
+
+    if df_user.empty:
+        st.info("Aucun démarchage enregistré pour le moment. Pousse la porte d'un magasin ! 🚪")
+    else:
+        df_sorted = df_user.sort_values(by=["Date", "Heure"], ascending=False).head(10)
+        for _, row in df_sorted.iterrows():
+            statut = str(row.get("Statut", "")) or "🔍"
+            magasin_safe = html.escape(str(row.get("Magasin", "")))
+            enseigne_safe = html.escape(str(row.get("Enseigne", "")))
+            date_safe = html.escape(str(row.get("Date", "")))
+            notes_safe = html.escape(str(row.get("Notes", "")))
+            thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
+            notes_html = f'<br><span style="font-size:12px;color:{TEXT_SOFT};">{notes_safe}</span>' if notes_safe else ""
+            card_html = (
+                f'<div class="visit-card">'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+                f'<div style="flex:1;">'
+                f'<strong style="font-size:15px;">{magasin_safe}</strong> · <span style="color:{ACCENT_PURPLE};font-weight:600;">{enseigne_safe}</span><br>'
+                f'<span style="font-size:12px;color:{TEXT_SOFT};">{date_safe} · {html.escape(statut)}</span>'
+                f'{notes_html}'
+                f'{thumbs_html}'
+                f'</div>'
+                f'</div></div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
+
+
+def screen_new_prospect():
+    st.markdown(
+        '<div class="main-header">'
+        '<h1>🔍 Nouveau démarchage</h1>'
+        '<p>Localise-toi, note le merch, garde une trace ✨</p>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    if st.button("← Retour"):
+        st.session_state.screen = "prospect_home"
+        st.rerun()
+
+    enseignes = load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES))
+
+    # ============= GÉOLOCALISATION =============
+    st.markdown('<div class="section-title">📍 Étape 1 — Localise-toi</div>', unsafe_allow_html=True)
+    st.caption("Clique sur l'icône 🌐 ci-dessous pour détecter ta position. La première fois, ton navigateur te demandera l'autorisation.")
+
+    location = streamlit_geolocation()
+
+    if location and location.get("latitude") and location["latitude"] != "None":
+        lat = float(location["latitude"])
+        lon = float(location["longitude"])
+
+        if st.session_state.get("geo_lat") != lat:
+            st.session_state.geo_lat = lat
+            st.session_state.geo_lon = lon
+            with st.spinner("Recherche de l'adresse…"):
+                geo_info = reverse_geocode(lat, lon)
+                if geo_info:
+                    st.session_state.geo_address = geo_info["address"]
+                    st.session_state.geo_city = geo_info["city"]
+                else:
+                    st.session_state.geo_address = ""
+                    st.session_state.geo_city = ""
+            with st.spinner("Recherche des magasins à proximité…"):
+                st.session_state.geo_shops = find_nearby_shops(lat, lon, radius=200)
+
+        st.markdown(f"""
+        <div class="geoloc-detected">
+            <strong>📍 Position détectée</strong><br>
+            <span style="font-size:13px;">{html.escape(st.session_state.get("geo_address", "Adresse inconnue"))}</span><br>
+            <span style="font-size:11px; opacity:0.7;">Lat: {lat:.5f} · Lon: {lon:.5f}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        shops = st.session_state.get("geo_shops", [])
+        if shops:
+            st.markdown("**🏪 Magasins détectés à proximité :**")
+            shop_options = ["✏️ Saisir manuellement"] + [
+                f"{s['name']} ({s['distance_m']}m)" + (f" · {s['shop_type']}" if s['shop_type'] else "")
+                for s in shops
+            ]
+            selected_idx = st.radio(
+                "Sélectionne le magasin",
+                range(len(shop_options)),
+                format_func=lambda i: shop_options[i],
+                label_visibility="collapsed",
+                key="prospect_shop_selector"
+            )
+            st.session_state.geo_selected = shops[selected_idx - 1] if selected_idx > 0 else None
+        else:
+            st.info("Aucun magasin détecté dans un rayon de 200m. Tu peux remplir manuellement.")
+            st.session_state.geo_selected = None
+    else:
+        st.info("👆 Clique sur l'icône GPS ci-dessus pour détecter ta position (optionnel mais recommandé).")
+
+    # ============= MÉMOIRE MAGASIN =============
+    selected_shop = st.session_state.get("geo_selected")
+    default_magasin = selected_shop["name"] if selected_shop else ""
+    default_ville = st.session_state.get("geo_city", "")
+
+    if default_magasin:
+        hist = prospect_history_for(default_magasin)
+        if not hist.empty:
+            st.markdown('<div class="section-title">🧠 On est déjà passés ici</div>', unsafe_allow_html=True)
+            st.caption(f"{len(hist)} passage(s) enregistré(s) pour « {default_magasin} »")
+            for _, h in hist.head(3).iterrows():
+                date_safe = html.escape(str(h.get("Date", "")))
+                statut_safe = html.escape(str(h.get("Statut", "")))
+                notes_safe = html.escape(str(h.get("Notes", "")))
+                thumbs_html = render_thumbnails(h.get("Photos_URLs", ""), size=120, max_thumbs=4)
+                notes_html = f'<br><span style="font-size:13px;">{notes_safe}</span>' if notes_safe else ""
+                st.markdown(
+                    f'<div class="visit-card">'
+                    f'<span style="font-size:12px;color:{TEXT_SOFT};">{date_safe} · {statut_safe}</span>'
+                    f'{notes_html}{thumbs_html}'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+    # ============= FORMULAIRE =============
+    st.markdown('<div class="section-title">📝 Étape 2 — Remplis les détails</div>', unsafe_allow_html=True)
+
+    default_enseigne_idx = 0
+    if selected_shop:
+        detected_enseigne = detect_enseigne_from_name(selected_shop["name"], enseignes)
+        if detected_enseigne and detected_enseigne in enseignes:
+            default_enseigne_idx = enseignes.index(detected_enseigne)
+
+    with st.form("new_prospect_form", clear_on_submit=True):
+        enseigne = st.selectbox("Enseigne *", enseignes, index=default_enseigne_idx)
+        magasin = st.text_input("Nom du magasin *", value=default_magasin, placeholder="Ex : Monoprix Haussmann")
+        ville = st.text_input("Ville *", value=default_ville, placeholder="Paris")
+        statut = st.selectbox("Statut du prospect *", DEFAULT_STATUTS_PROSPECT)
+
+        st.markdown("**📸 Photos du merch / linéaire** (caméra ou galerie)")
+        photos = st.file_uploader(
+            "Photos",
+            accept_multiple_files=True,
+            type=["jpg", "jpeg", "png"],
+            label_visibility="collapsed"
+        )
+
+        notes = st.text_area(
+            "💬 Notes (merch, interlocuteur, à retenir…)",
+            placeholder="Ex : Bon emplacement caisse, parler à Sarah la responsable, revenir avec PLV…",
+            height=90
+        )
+
+        submitted = st.form_submit_button("✅ Enregistrer le démarchage", use_container_width=True, type="primary")
+
+        if submitted:
+            if not magasin.strip() or not ville.strip():
+                st.error("Le nom du magasin et la ville sont obligatoires.")
+                return
+
+            with st.spinner("Enregistrement en cours…"):
+                prospect_id = str(uuid.uuid4())[:8]
+                now = datetime.now()
+
+                photo_urls = []
+                photos_failed = 0
+                if photos:
+                    progress_bar = st.progress(0, text="Upload des photos…")
+                    for i, photo in enumerate(photos):
+                        try:
+                            filename = f"{now.strftime('%Y%m%d_%H%M%S')}_PROSPECT_{enseigne}_{magasin.replace(' ', '_')}_{i+1}.jpg"
+                            url = upload_photo(photo, filename)
+                            photo_urls.append(url)
+                        except Exception as e:
+                            photos_failed += 1
+                            st.warning(f"⚠️ Photo {i+1} non envoyée (sera à reprendre) : {str(e)[:100]}")
+                        progress_bar.progress((i + 1) / len(photos), text=f"Upload {i+1}/{len(photos)}")
+                    progress_bar.empty()
+
+                data = {
+                    "id": prospect_id,
+                    "date": now.strftime("%Y-%m-%d"),
+                    "heure": now.strftime("%H:%M"),
+                    "commercial": st.session_state.commercial,
+                    "enseigne": enseigne,
+                    "magasin": magasin.strip(),
+                    "ville": ville.strip(),
+                    "statut": statut,
+                    "notes": notes.strip(),
+                    "latitude": st.session_state.get("geo_lat", ""),
+                    "longitude": st.session_state.get("geo_lon", ""),
+                    "adresse": st.session_state.get("geo_address", ""),
+                }
+                save_prospect(data, photo_urls)
+
+            if photos_failed > 0:
+                st.success(f"✅ Démarchage enregistré — {len(photo_urls)} photo(s) ok, {photos_failed} échec(s).")
+            else:
+                st.success(f"💜 Démarchage enregistré ! ({len(photo_urls)} photo(s) uploadée(s))")
+            st.balloons()
+            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+                st.session_state.pop(k, None)
+            st.session_state.screen = "prospect_home"
             st.rerun()
 
 
@@ -1939,6 +2263,10 @@ else:
         screen_home()
     elif screen == "new_visit":
         screen_new_visit()
+    elif screen == "prospect_home":
+        screen_prospect_home()
+    elif screen == "new_prospect":
+        screen_new_prospect()
     elif screen == "history":
         screen_history()
     elif screen == "dashboard":
