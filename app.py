@@ -830,6 +830,90 @@ def notify_slack(visit_data, photo_urls):
         print(f"[Slack notif] Exception: {e}")
 
 
+def notify_slack_prospect(data, photo_urls):
+    """Notifie Slack pour un démarchage (prospection). Même webhook que les
+    visites, mais bandeau violet et libellé distinct pour ne pas confondre
+    avec un client. Échec silencieux si le webhook n'est pas configuré."""
+    try:
+        webhook_url = st.secrets.get("slack_webhook_url", None)
+    except Exception:
+        webhook_url = None
+    if not webhook_url:
+        return
+
+    header_text = f"🔍 Démarchage — {data['magasin']}"
+    color = "#B084EE"  # violet = prospection (≠ rose client)
+
+    fields = [
+        {"type": "mrkdwn", "text": f"*👤 Commercial*\n{data['commercial']}"},
+        {"type": "mrkdwn", "text": f"*🏪 Enseigne*\n{data['enseigne']}"},
+        {"type": "mrkdwn", "text": f"*📍 Ville*\n{data['ville']}"},
+        {"type": "mrkdwn", "text": f"*🎯 Statut*\n{data['statut']}"},
+    ]
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": header_text, "emoji": True}},
+        {"type": "section", "fields": fields},
+    ]
+
+    if data.get("notes"):
+        notes_safe = data["notes"][:300]
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"💬 _{notes_safe}_"},
+        })
+
+    if photo_urls:
+        max_photos = 4
+        for i, url in enumerate(photo_urls[:max_photos]):
+            thumb_url = make_thumbnail_url(url, size=300)
+            blocks.append({
+                "type": "image",
+                "image_url": thumb_url,
+                "alt_text": f"Photo {i+1} de {data['magasin']}",
+            })
+        remaining = len(photo_urls) - max_photos
+        if remaining > 0:
+            blocks.append({
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": f"📸 +{remaining} autre(s) photo(s) dans la fiche démarchage",
+                }],
+            })
+
+    blocks.append({
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": f"🕒 {data['date']} {data['heure']} · ID: `{data['id']}` · 🔍 prospection",
+        }],
+    })
+
+    payload = {"attachments": [{"color": color, "blocks": blocks}]}
+
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=5)
+        if resp.status_code != 200:
+            print(f"[Slack notif prospect] HTTP {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        print(f"[Slack notif prospect] Exception: {e}")
+
+
+def delete_prospect_by_id(prospect_id):
+    """Supprime un démarchage par son ID dans l'onglet Démarchage."""
+    sheet = get_prospects_sheet()
+    all_data = sheet.get_all_values()
+    for i, row in enumerate(all_data):
+        if i == 0:
+            continue
+        if row and len(row) > 0 and row[0] == prospect_id:
+            sheet.delete_rows(i + 1)
+            st.cache_data.clear()
+            return True
+    return False
+
+
 def delete_visit_by_id(visit_id):
     """Supprime une visite par son ID dans la Sheet."""
     sheet = get_visits_sheet()
@@ -1501,6 +1585,8 @@ def screen_new_prospect():
                     "adresse": st.session_state.get("geo_address", ""),
                 }
                 save_prospect(data, photo_urls)
+                # Notif Slack (best-effort — n'interrompt jamais la sauvegarde)
+                notify_slack_prospect(data, photo_urls)
 
             if photos_failed > 0:
                 st.success(f"✅ Démarchage enregistré — {len(photo_urls)} photo(s) ok, {photos_failed} échec(s).")
@@ -1736,12 +1822,14 @@ def screen_admin():
 
     st.write("")
 
-    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Analyses", "📋 Visites", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
+    tab0, tab1, tab_pros, tab2, tab3, tab4, tab5 = st.tabs(["📊 Analyses", "📋 Visites", "🔍 Démarchage", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
 
     with tab0:
         manage_analytics()
     with tab1:
         manage_visits()
+    with tab_pros:
+        manage_prospects()
     with tab2:
         manage_list("Enseignes", DEFAULT_ENSEIGNES)
     with tab3:
@@ -2193,6 +2281,109 @@ def manage_visits():
 
     if pending_delete:
         st.warning(f"⚠️ Clique sur ✅ pour confirmer la suppression de la visite `{pending_delete}`, ou ✕ pour annuler.")
+
+
+def manage_prospects():
+    """Gestion admin des démarchages : liste, filtre, suppression."""
+    df = load_prospects()
+    if df.empty:
+        st.info("Aucun démarchage enregistré pour le moment.")
+        return
+
+    st.markdown(f"### {len(df)} démarchage(s) au total")
+    st.caption("💡 Prospection — ce ne sont pas des clients. Filtre pour retrouver ou supprimer un passage.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_commercial = st.multiselect("Commercial", sorted(df["Commercial"].unique()), key="admin_pros_commercial")
+    with col2:
+        filter_statut = st.multiselect("Statut", sorted(df["Statut"].unique()), key="admin_pros_statut")
+
+    search = st.text_input("🔍 Rechercher", placeholder="Magasin, ville, ID, notes…", key="admin_pros_search")
+
+    df_filtered = df.copy()
+    if filter_commercial:
+        df_filtered = df_filtered[df_filtered["Commercial"].isin(filter_commercial)]
+    if filter_statut:
+        df_filtered = df_filtered[df_filtered["Statut"].isin(filter_statut)]
+    if search:
+        s = search.lower()
+        mask = (
+            df_filtered["Magasin"].astype(str).str.lower().str.contains(s, na=False) |
+            df_filtered["Ville"].astype(str).str.lower().str.contains(s, na=False) |
+            df_filtered["ID"].astype(str).str.lower().str.contains(s, na=False) |
+            df_filtered["Notes"].astype(str).str.lower().str.contains(s, na=False)
+        )
+        df_filtered = df_filtered[mask]
+
+    df_filtered = df_filtered.sort_values(by=["Date", "Heure"], ascending=False)
+
+    st.markdown(f"### {len(df_filtered)} résultat(s)")
+
+    if df_filtered.empty:
+        st.info("Aucun démarchage ne correspond à ces filtres.")
+        return
+
+    pending_delete = st.session_state.get("pending_delete_prospect_id")
+
+    for _, row in df_filtered.iterrows():
+        prospect_id = row["ID"]
+        statut_str = str(row.get("Statut", "")) or "🔍"
+
+        magasin_safe = html.escape(str(row.get("Magasin", "")))
+        enseigne_safe = html.escape(str(row.get("Enseigne", "")))
+        ville_safe = html.escape(str(row.get("Ville", "")))
+        date_safe = html.escape(str(row.get("Date", "")))
+        heure_safe = html.escape(str(row.get("Heure", "")))
+        commercial_safe = html.escape(str(row.get("Commercial", "")))
+        statut_safe = html.escape(statut_str)
+        prospect_id_safe = html.escape(str(prospect_id))
+
+        col_card, col_btn = st.columns([5, 1])
+
+        with col_card:
+            notes_html = ""
+            if row.get("Notes"):
+                notes_str = str(row["Notes"])
+                truncated = notes_str[:80] + ("…" if len(notes_str) > 80 else "")
+                notes_safe = html.escape(truncated)
+                notes_html = f'<div style="margin-top:4px;font-size:11px;color:{TEXT_SOFT};font-style:italic;">💬 {notes_safe}</div>'
+
+            thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
+
+            card_html = (
+                f'<div class="visit-card" style="padding:12px 16px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+                f'<div style="flex:1;">'
+                f'<strong>{magasin_safe}</strong> · <span style="color:{ACCENT_PURPLE};font-weight:600;">{enseigne_safe} — {ville_safe}</span><br>'
+                f'<span style="font-size:11px;color:{TEXT_SOFT};">{date_safe} {heure_safe} · 👤 {commercial_safe} · ID: <code>{prospect_id_safe}</code></span>'
+                f'<div style="margin-top:4px;font-size:12px;">🎯 {statut_safe}</div>'
+                f'{notes_html}'
+                f'{thumbs_html}'
+                f'</div></div></div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
+
+        with col_btn:
+            if pending_delete == prospect_id:
+                if st.button("✅", key=f"confirm_pros_{prospect_id}", help="Confirmer la suppression"):
+                    with st.spinner("Suppression…"):
+                        if delete_prospect_by_id(prospect_id):
+                            st.session_state.pop("pending_delete_prospect_id", None)
+                            st.success("Démarchage supprimé.")
+                            st.rerun()
+                        else:
+                            st.error("Erreur lors de la suppression.")
+                if st.button("✕", key=f"cancel_pros_{prospect_id}", help="Annuler"):
+                    st.session_state.pop("pending_delete_prospect_id", None)
+                    st.rerun()
+            else:
+                if st.button("🗑️", key=f"del_pros_{prospect_id}", help="Supprimer ce démarchage"):
+                    st.session_state["pending_delete_prospect_id"] = prospect_id
+                    st.rerun()
+
+    if pending_delete:
+        st.warning(f"⚠️ Clique sur ✅ pour confirmer la suppression du démarchage `{pending_delete}`, ou ✕ pour annuler.")
 
 
 def manage_list(name, defaults, with_emoji_hint=False):
