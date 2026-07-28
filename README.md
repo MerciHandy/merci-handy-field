@@ -165,9 +165,11 @@ Pour désactiver temporairement : supprime juste la ligne `slack_webhook_url` de
 
 ## 🆕 Nouveautés v4.1 — Ville + code postal
 
-- 🏙️ Champ **Ville** avec autocomplétion : tape le début du nom (`marseil`) ou le code
-  postal (`75011`), choisis dans la liste → la ville est enregistrée au format
-  `Paris (75011)` (visites **et** démarchage).
+- 🏙️ Champ **Ville** en combobox type Google (`streamlit-searchbox`) : tape le début du
+  nom (`marseil`) ou le code postal (`75011`), les suggestions s'affichent dans une liste
+  déroulante sous le champ → la ville est enregistrée au format `Paris (75011)`
+  (visites **et** démarchage). Si le composant n'est pas installé, repli automatique sur
+  un champ texte + liste de suggestions.
 - 📡 Source : [geo.api.gouv.fr](https://geo.api.gouv.fr) — API officielle, gratuite,
   sans clé ni quota. Si elle est indisponible, l'app propose les villes déjà présentes
   dans la Sheet, et la saisie libre reste toujours possible.

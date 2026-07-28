@@ -11,3 +11,4 @@ requests==2.32.3
 Pillow==10.4.0
 streamlit-geolocation==0.0.10
 streamlit-local-storage==0.0.25
+streamlit-searchbox==0.1.24

@@ -22,6 +22,14 @@ import cloudinary
 import cloudinary.uploader
 from streamlit_local_storage import LocalStorage
 
+# Combobox « à la Google » (saisie + suggestions déroulantes). Optionnel : si le
+# composant n'est pas installé, l'app retombe sur un champ texte + liste classique.
+try:
+    from streamlit_searchbox import st_searchbox
+    HAS_SEARCHBOX = True
+except Exception:
+    HAS_SEARCHBOX = False
+
 # =========================================================================
 # CONFIGURATION
 # =========================================================================
@@ -504,21 +512,28 @@ def known_villes():
     return sorted({v for v in vals if v}, key=str.lower)
 
 
-def ville_input(key_prefix, default_ville=""):
-    """Champ « Ville » avec suggestions ville + code postal.
+def search_villes(term):
+    """Fonction de recherche du combobox : renvoie les suggestions pour la saisie en cours."""
+    q = (term or "").strip()
+    if len(q) < 2:
+        return []
+    # Déjà au format « Ville (75011) » → rien à chercher
+    if VILLE_CP_RE.match(q):
+        return [q]
+    options = search_communes(q)
+    if not options:
+        ql = q.lower()
+        options = [v for v in known_villes() if ql in v.lower()][:10]
+    # La saisie libre reste toujours possible (villes hors France, DOM, etc.)
+    if q not in options:
+        options = options + [q]
+    return options
 
-    ⚠️ À placer HORS d'un st.form : dans un formulaire, Streamlit ne relance pas
-    le script pendant la saisie, donc aucune suggestion ne pourrait s'afficher.
-    Renvoie la valeur finale à enregistrer (ex. « Paris (75011) »).
-    """
+
+def _ville_input_fallback(key_prefix, default_ville=""):
+    """Repli sans composant externe : champ texte + liste de suggestions."""
     query_key = f"{key_prefix}_ville_query"
     pick_key = f"{key_prefix}_ville_pick"
-    geo_key = f"{key_prefix}_ville_geo"
-
-    # Pré-remplissage GPS : on n'écrase la saisie que si une NOUVELLE position arrive.
-    if default_ville and st.session_state.get(geo_key) != default_ville:
-        st.session_state[geo_key] = default_ville
-        st.session_state[query_key] = default_ville
 
     query = st.text_input(
         "Ville *",
@@ -527,23 +542,11 @@ def ville_input(key_prefix, default_ville=""):
         help="Tape le début du nom de la ville ou le code postal, puis choisis une suggestion.",
     )
     q = (query or "").strip()
-
-    if not q:
-        st.caption("⚠️ Ville obligatoire.")
-        return ""
-
-    # Déjà au format « Ville (75011) » (saisie manuelle ou GPS) → rien à suggérer.
-    if VILLE_CP_RE.match(q):
-        st.caption(f"📍 Sera enregistré : **{q}**")
+    if not q or VILLE_CP_RE.match(q):
         return q
 
-    suggestions = search_communes(q)
+    suggestions = [o for o in search_villes(q) if o != q]
     if not suggestions:
-        ql = q.lower()
-        suggestions = [v for v in known_villes() if ql in v.lower()][:10]
-
-    if not suggestions:
-        st.caption(f"📍 Sera enregistré : **{q}** (aucune suggestion trouvée)")
         return q
 
     manual = f"✏️ Garder « {q} » tel quel"
@@ -557,9 +560,49 @@ def ville_input(key_prefix, default_ville=""):
         key=pick_key,
         label_visibility="collapsed",
     )
-    chosen = q if pick == manual else pick
-    st.caption(f"📍 Sera enregistré : **{chosen}**")
-    return chosen
+    return q if pick == manual else pick
+
+
+def ville_input(key_prefix, default_ville=""):
+    """Champ « Ville » type Google : on tape, les suggestions ville + code postal
+    s'affichent dans une liste déroulante sous le champ.
+
+    ⚠️ À placer HORS d'un st.form : dans un formulaire, Streamlit ne relance pas
+    le script pendant la saisie, donc aucune suggestion ne pourrait s'afficher.
+    Renvoie la valeur finale à enregistrer (ex. « Paris (75011) »).
+    """
+    box_key = f"{key_prefix}_ville_box"
+    geo_key = f"{key_prefix}_ville_geo"
+
+    # Pré-remplissage GPS : on ne réinitialise que si une NOUVELLE position arrive.
+    if default_ville and st.session_state.get(geo_key) != default_ville:
+        st.session_state[geo_key] = default_ville
+        for k in (box_key, f"{key_prefix}_ville_query", f"{key_prefix}_ville_pick"):
+            st.session_state.pop(k, None)
+
+    if HAS_SEARCHBOX:
+        ville = st_searchbox(
+            search_villes,
+            key=box_key,
+            label="Ville *",
+            placeholder="Ex : Paris, 75011, Marseille…",
+            default=default_ville or None,
+            default_searchterm=default_ville or "",
+            default_use_searchterm=True,   # garde la saisie libre si aucune suggestion choisie
+            default_options=[default_ville] if default_ville else None,
+            edit_after_submit="option",    # la ville choisie reste modifiable
+            debounce=250,                  # évite un appel API à chaque touche
+            help="Tape le début du nom de la ville ou le code postal, puis choisis dans la liste.",
+        )
+    else:
+        ville = _ville_input_fallback(key_prefix, default_ville)
+
+    ville = str(ville or "").strip()
+    if ville:
+        st.caption(f"📍 Sera enregistré : **{ville}**")
+    else:
+        st.caption("⚠️ Ville obligatoire.")
+    return ville
 
 
 def find_nearby_shops(lat, lon, radius=150):
@@ -1245,16 +1288,16 @@ def screen_home():
     if st.button("➕  Nouvelle visite", use_container_width=True, type="primary"):
         st.session_state.screen = "new_visit"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
-                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
             st.session_state.pop(k, None)
         st.rerun()
 
     if st.button("🔍  Démarchage (prospection)", use_container_width=True):
         st.session_state.screen = "prospect_home"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
-                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1488,8 +1531,8 @@ def screen_new_visit():
                 st.success(f"💖 Visite enregistrée ! ({len(photo_urls)} photo(s) uploadée(s))")
             st.balloons()
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
-                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "home"
             st.rerun()
@@ -1532,8 +1575,8 @@ def screen_prospect_home():
     if st.button("➕  Nouveau démarchage", use_container_width=True, type="primary"):
         st.session_state.screen = "new_prospect"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
-                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1740,8 +1783,8 @@ def screen_new_prospect():
                 st.success(f"💜 Démarchage enregistré ! ({len(photo_urls)} photo(s) uploadée(s))")
             st.balloons()
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
-                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "prospect_home"
             st.rerun()
