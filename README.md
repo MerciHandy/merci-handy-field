@@ -163,6 +163,21 @@ Pour désactiver temporairement : supprime juste la ligne `slack_webhook_url` de
 
 ---
 
+## 🆕 Nouveautés v4.1 — Ville + code postal
+
+- 🏙️ Champ **Ville** avec autocomplétion : tape le début du nom (`marseil`) ou le code
+  postal (`75011`), choisis dans la liste → la ville est enregistrée au format
+  `Paris (75011)` (visites **et** démarchage).
+- 📡 Source : [geo.api.gouv.fr](https://geo.api.gouv.fr) — API officielle, gratuite,
+  sans clé ni quota. Si elle est indisponible, l'app propose les villes déjà présentes
+  dans la Sheet, et la saisie libre reste toujours possible.
+- 📍 Le GPS pré-remplit désormais la ville **avec son code postal** (via Nominatim).
+- ⚠️ Le champ est volontairement placé *au-dessus* du formulaire : dans un `st.form`,
+  Streamlit ne relance pas le script pendant la saisie, donc aucune suggestion ne
+  pourrait s'afficher.
+
+---
+
 ## 🆕 Nouveautés v4 — Pop & Colorful
 
 - 💖 Nouvelle palette pop : rose vif + jaune + mint + bleu + corail

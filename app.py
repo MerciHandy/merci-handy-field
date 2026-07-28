@@ -13,6 +13,7 @@ from googleapiclient.http import MediaIoBaseUpload
 import io
 import uuid
 import requests
+import re
 import time
 import html
 from PIL import Image, ImageOps
@@ -418,16 +419,147 @@ def reverse_geocode(lat, lon):
         resp = requests.get(url, params=params, headers=headers, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
+            addr = data.get("address", {})
+            city = addr.get("city") or addr.get("town") or addr.get("village", "")
+            postcode = addr.get("postcode", "")
             return {
                 "address": data.get("display_name", ""),
-                "city": data.get("address", {}).get("city")
-                        or data.get("address", {}).get("town")
-                        or data.get("address", {}).get("village", ""),
-                "postcode": data.get("address", {}).get("postcode", ""),
+                "city": city,
+                "postcode": postcode,
+                # Libellé prêt à enregistrer : « Paris (75011) »
+                "city_label": f"{city} ({postcode})" if (city and postcode) else city,
             }
     except Exception:
         pass
     return None
+
+
+VILLE_CP_RE = re.compile(r"^\s*.+\(\s*\d{5}\s*\)\s*$")
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def search_communes(query, limit=10):
+    """Suggestions « Ville (code postal) » via geo.api.gouv.fr (API officielle, gratuite, sans clé).
+
+    Accepte un début de nom (« marseil ») ou un code postal (« 7501 »).
+    Renvoie une liste de libellés prêts à enregistrer, ex. ["Paris (75011)", ...].
+    """
+    q = (query or "").strip()
+    if len(q) < 2:
+        return []
+    try:
+        params = {"fields": "nom,codesPostaux", "limit": limit, "boost": "population"}
+        digits = q.replace(" ", "")
+        if digits.isdigit():
+            if len(digits) < 3:
+                return []
+            params["codePostal"] = digits
+        else:
+            params["nom"] = q
+        resp = requests.get("https://geo.api.gouv.fr/communes", params=params, timeout=5)
+        if resp.status_code != 200:
+            return []
+        communes = resp.json()
+    except Exception:
+        return []
+
+    q_norm = q.lower().strip()
+    out = []
+    for c in communes if isinstance(communes, list) else []:
+        nom = (c.get("nom") or "").strip()
+        cps = [str(cp) for cp in (c.get("codesPostaux") or [])]
+        if digits.isdigit():
+            cps = [cp for cp in cps if cp.startswith(digits)] or cps
+        cps = sorted(set(cps))
+        if not nom:
+            continue
+        if not cps:
+            out.append(nom)
+            continue
+        # Commune tapée exactement (Paris, Lyon, Marseille…) → on propose tous ses
+        # arrondissements / codes postaux. Sinon un seul CP pour garder la liste courte.
+        expand = nom.lower() == q_norm or len(cps) <= 3 or digits.isdigit()
+        for cp in (cps if expand else cps[:1]):
+            out.append(f"{nom} ({cp})")
+
+    seen, dedup = set(), []
+    for label in out:
+        if label not in seen:
+            seen.add(label)
+            dedup.append(label)
+    return dedup[:25]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def known_villes():
+    """Villes déjà saisies dans le Sheet — filet de secours si l'API est indisponible."""
+    vals = []
+    for loader in (load_visits, load_prospects):
+        try:
+            df = loader()
+            if not df.empty and "Ville" in df.columns:
+                vals += [str(v).strip() for v in df["Ville"].dropna().tolist()]
+        except Exception:
+            pass
+    return sorted({v for v in vals if v}, key=str.lower)
+
+
+def ville_input(key_prefix, default_ville=""):
+    """Champ « Ville » avec suggestions ville + code postal.
+
+    ⚠️ À placer HORS d'un st.form : dans un formulaire, Streamlit ne relance pas
+    le script pendant la saisie, donc aucune suggestion ne pourrait s'afficher.
+    Renvoie la valeur finale à enregistrer (ex. « Paris (75011) »).
+    """
+    query_key = f"{key_prefix}_ville_query"
+    pick_key = f"{key_prefix}_ville_pick"
+    geo_key = f"{key_prefix}_ville_geo"
+
+    # Pré-remplissage GPS : on n'écrase la saisie que si une NOUVELLE position arrive.
+    if default_ville and st.session_state.get(geo_key) != default_ville:
+        st.session_state[geo_key] = default_ville
+        st.session_state[query_key] = default_ville
+
+    query = st.text_input(
+        "Ville *",
+        key=query_key,
+        placeholder="Ex : Paris, 75011, Marseille…",
+        help="Tape le début du nom de la ville ou le code postal, puis choisis une suggestion.",
+    )
+    q = (query or "").strip()
+
+    if not q:
+        st.caption("⚠️ Ville obligatoire.")
+        return ""
+
+    # Déjà au format « Ville (75011) » (saisie manuelle ou GPS) → rien à suggérer.
+    if VILLE_CP_RE.match(q):
+        st.caption(f"📍 Sera enregistré : **{q}**")
+        return q
+
+    suggestions = search_communes(q)
+    if not suggestions:
+        ql = q.lower()
+        suggestions = [v for v in known_villes() if ql in v.lower()][:10]
+
+    if not suggestions:
+        st.caption(f"📍 Sera enregistré : **{q}** (aucune suggestion trouvée)")
+        return q
+
+    manual = f"✏️ Garder « {q} » tel quel"
+    options = suggestions + [manual]
+    # La liste change à chaque frappe : on purge une sélection devenue obsolète
+    if st.session_state.get(pick_key) not in options:
+        st.session_state.pop(pick_key, None)
+    pick = st.selectbox(
+        "Suggestions ville / code postal",
+        options,
+        key=pick_key,
+        label_visibility="collapsed",
+    )
+    chosen = q if pick == manual else pick
+    st.caption(f"📍 Sera enregistré : **{chosen}**")
+    return chosen
 
 
 def find_nearby_shops(lat, lon, radius=150):
@@ -1112,13 +1244,17 @@ def screen_home():
     st.write("")
     if st.button("➕  Nouvelle visite", use_container_width=True, type="primary"):
         st.session_state.screen = "new_visit"
-        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
             st.session_state.pop(k, None)
         st.rerun()
 
     if st.button("🔍  Démarchage (prospection)", use_container_width=True):
         st.session_state.screen = "prospect_home"
-        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1215,7 +1351,7 @@ def screen_new_visit():
                 geo_info = reverse_geocode(lat, lon)
                 if geo_info:
                     st.session_state.geo_address = geo_info["address"]
-                    st.session_state.geo_city = geo_info["city"]
+                    st.session_state.geo_city = geo_info.get("city_label") or geo_info["city"]
                 else:
                     st.session_state.geo_address = ""
                     st.session_state.geo_city = ""
@@ -1269,10 +1405,13 @@ def screen_new_visit():
         if detected_enseigne and detected_enseigne in enseignes:
             default_enseigne_idx = enseignes.index(detected_enseigne)
 
+    # Ville : hors du formulaire pour que les suggestions se rafraîchissent à la saisie
+    ville = ville_input("visit", default_ville)
+
     with st.form("new_visit_form", clear_on_submit=True):
         enseigne = st.selectbox("Enseigne *", enseignes, index=default_enseigne_idx)
         magasin = st.text_input("Nom du magasin *", value=default_magasin, placeholder="Ex : Monoprix Haussmann")
-        ville = st.text_input("Ville *", value=default_ville, placeholder="Paris")
+        st.caption(f"📍 Ville : **{ville}**" if ville else "📍 Ville : à renseigner ci-dessus ☝️")
         projet = st.selectbox("Projet / animation *", projets)
 
         st.markdown("**État du linéaire** (coche tout ce qui s'applique)")
@@ -1348,7 +1487,9 @@ def screen_new_visit():
             else:
                 st.success(f"💖 Visite enregistrée ! ({len(photo_urls)} photo(s) uploadée(s))")
             st.balloons()
-            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "home"
             st.rerun()
@@ -1390,7 +1531,9 @@ def screen_prospect_home():
     st.write("")
     if st.button("➕  Nouveau démarchage", use_container_width=True, type="primary"):
         st.session_state.screen = "new_prospect"
-        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1455,7 +1598,7 @@ def screen_new_prospect():
                 geo_info = reverse_geocode(lat, lon)
                 if geo_info:
                     st.session_state.geo_address = geo_info["address"]
-                    st.session_state.geo_city = geo_info["city"]
+                    st.session_state.geo_city = geo_info.get("city_label") or geo_info["city"]
                 else:
                     st.session_state.geo_address = ""
                     st.session_state.geo_city = ""
@@ -1524,10 +1667,13 @@ def screen_new_prospect():
         if detected_enseigne and detected_enseigne in enseignes:
             default_enseigne_idx = enseignes.index(detected_enseigne)
 
+    # Ville : hors du formulaire pour que les suggestions se rafraîchissent à la saisie
+    ville = ville_input("prospect", default_ville)
+
     with st.form("new_prospect_form", clear_on_submit=True):
         enseigne = st.selectbox("Enseigne *", enseignes, index=default_enseigne_idx)
         magasin = st.text_input("Nom du magasin *", value=default_magasin, placeholder="Ex : Monoprix Haussmann")
-        ville = st.text_input("Ville *", value=default_ville, placeholder="Paris")
+        st.caption(f"📍 Ville : **{ville}**" if ville else "📍 Ville : à renseigner ci-dessus ☝️")
         statut = st.selectbox("Statut du prospect *", DEFAULT_STATUTS_PROSPECT)
 
         st.markdown("**📸 Photos du merch / linéaire** (caméra ou galerie)")
@@ -1593,7 +1739,9 @@ def screen_new_prospect():
             else:
                 st.success(f"💜 Démarchage enregistré ! ({len(photo_urls)} photo(s) uploadée(s))")
             st.balloons()
-            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected"]:
+            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "prospect_home"
             st.rerun()
