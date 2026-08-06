@@ -2220,6 +2220,17 @@ def _norm_txt(s):
     return "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
 
 
+def _tokens(s):
+    """Mots significatifs (≥3 lettres/chiffres) d'un nom, sans accents ni casse."""
+    return {t for t in re.split(r"[^a-z0-9]+", _norm_txt(s)) if len(t) >= 3}
+
+
+def _cp_of(ville):
+    """Code postal d'un libellé « Ville (75011) », sinon ''."""
+    m = re.search(r"\((\d{5})\)", str(ville or ""))
+    return m.group(1) if m else ""
+
+
 def _enseigne_reseau(layer, nom, enseignes_cfg):
     """Enseigne d'un magasin My Maps : match insensible aux accents/casse sur le
     calque et le nom, sinon libellé dérivé du calque (« NOCIBE FRANCE » → « Nocibe »)."""
@@ -2309,17 +2320,56 @@ def build_map_points():
             enseignes_cfg = load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES))
         except Exception:
             enseignes_cfg = list(DEFAULT_ENSEIGNES)
+        # Unicité enseigne/CP : si Nocibé n'a qu'UN magasin à Lille (59000), une
+        # visite « Nocibé » à Lille peut lui être rattachée sans ambiguïté.
+        # Mots trop génériques pour identifier un magasin
+        _STOP = {"centre", "commercial", "france", "rue", "avenue", "place", "les", "grand", "grande"}
+        ens_cp_count = {}
+        ns_meta = []
         for ns in network:
             ens = _enseigne_reseau(ns["layer"], ns["nom"], enseignes_cfg)
-            match = None
-            for p in points:
-                if p["magasin"].strip().lower() == ns["nom"].strip().lower():
-                    match = p
+            key = (_norm_txt(ens), ns.get("cp", ""))
+            ens_cp_count[key] = ens_cp_count.get(key, 0) + 1
+            # Mots distinctifs du nom : sans l'enseigne, la ville ni les mots génériques
+            distinct = _tokens(ns["nom"]) - _tokens(ens) - _tokens(ns.get("city", "")) - _STOP
+            ns_meta.append((ns, ens, distinct))
+
+        # Précalcul côté visites (les points réseau ajoutés ensuite n'y figurent pas)
+        p_meta = {
+            idx: (_norm_txt(p["magasin"]),
+                  _tokens(p["magasin"]) - _tokens(p["enseigne"]) - _tokens(p["ville"]) - _STOP,
+                  _cp_of(p["ville"]),
+                  _norm_txt(p["enseigne"]))
+            for idx, p in enumerate(points)
+        }
+
+        used = set()  # une visite ne peut absorber qu'UN magasin du réseau
+        for ns, ens, ns_tokens in ns_meta:
+            ens_norm = _norm_txt(ens)
+            unique = ens_cp_count.get((ens_norm, ns.get("cp", "")), 0) == 1
+            match_idx = None
+            for idx, (p_nom, p_tokens, p_cp, p_ens) in p_meta.items():
+                if idx in used:
+                    continue
+                p = points[idx]
+                # 1) même nom (sans accents/casse)
+                if p_nom == _norm_txt(ns["nom"]):
+                    match_idx = idx
                     break
+                # 2) visite géolocalisée à < 150 m du magasin
                 if not p["approx"] and _dist_m(p["lat"], p["lon"], ns["lat"], ns["lon"]) < 150:
-                    match = p
+                    match_idx = idx
                     break
-            if match is not None:
+                # 3) rapprochement par code postal : même enseigne unique dans la
+                #    ville, ou ≥ 2 mots communs entre les noms
+                if p_cp and p_cp == ns.get("cp", ""):
+                    same_ens = p_ens != "" and p_ens == ens_norm
+                    if (same_ens and unique) or len(p_tokens & ns_tokens) >= 1:
+                        match_idx = idx
+                        break
+            if match_idx is not None:
+                used.add(match_idx)
+                match = points[match_idx]
                 # Déjà visité/démarché : on enrichit la fiche et on recale le marqueur
                 # sur la position officielle du magasin (plus fiable que le GPS du commercial).
                 match["lat"], match["lon"], match["approx"] = ns["lat"], ns["lon"], False
@@ -2615,6 +2665,13 @@ def screen_map():
                 .replace("__PURPLE__", ACCENT_PURPLE)
                 .replace("__BLUE__", ACCENT_BLUE))
     components.html(map_html, height=520)
+
+    nb_rattaches = sum(1 for p in points if p["type"] != "reseau" and p.get("code"))
+    nb_clients_tot = sum(1 for p in points if p["type"] != "reseau")
+    if nb_clients_tot:
+        st.caption(f"🔗 {nb_rattaches}/{nb_clients_tot} magasins visités rattachés à une fiche du "
+                   "réseau My Maps (nom identique, GPS < 150 m, ou même enseigne/ville sans ambiguïté) "
+                   "— leur historique s'affiche sur le marqueur officiel du magasin.")
 
     notes = []
     if nb_approx:
