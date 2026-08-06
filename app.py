@@ -10,8 +10,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+import base64
 import io
 import json
+import os
 import uuid
 import requests
 import xml.etree.ElementTree as ET
@@ -1323,11 +1325,12 @@ def screen_home():
             date_safe = html.escape(str(row.get("Date", "")))
             projet_safe = html.escape(str(row.get("Projet", "")))
             thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
+            logo_html = logo_img(row.get("Enseigne", ""), height=16)
             card_html = (
                 f'<div class="visit-card">'
                 f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
                 f'<div style="flex:1;">'
-                f'<strong style="font-size:15px;">{magasin_safe}</strong> · <span style="color:{PRIMARY};font-weight:600;">{enseigne_safe}</span><br>'
+                f'{logo_html}<strong style="font-size:15px;">{magasin_safe}</strong> · <span style="color:{PRIMARY};font-weight:600;">{enseigne_safe}</span><br>'
                 f'<span style="font-size:12px;color:{TEXT_SOFT};">{date_safe} · {projet_safe}</span>'
                 f'{thumbs_html}'
                 f'</div>'
@@ -1614,11 +1617,12 @@ def screen_prospect_home():
             notes_safe = html.escape(str(row.get("Notes", "")))
             thumbs_html = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
             notes_html = f'<br><span style="font-size:12px;color:{TEXT_SOFT};">{notes_safe}</span>' if notes_safe else ""
+            logo_html = logo_img(row.get("Enseigne", ""), height=16)
             card_html = (
                 f'<div class="visit-card">'
                 f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
                 f'<div style="flex:1;">'
-                f'<strong style="font-size:15px;">{magasin_safe}</strong> · <span style="color:{ACCENT_PURPLE};font-weight:600;">{enseigne_safe}</span><br>'
+                f'{logo_html}<strong style="font-size:15px;">{magasin_safe}</strong> · <span style="color:{ACCENT_PURPLE};font-weight:600;">{enseigne_safe}</span><br>'
                 f'<span style="font-size:12px;color:{TEXT_SOFT};">{date_safe} · {html.escape(statut)}</span>'
                 f'{notes_html}'
                 f'{thumbs_html}'
@@ -2240,6 +2244,59 @@ def _city_of(ville):
     return "" if re.fullmatch(r"\d*", v) else _norm_txt(v)
 
 
+# --- Logos enseignes (dossier logos/ du repo) -------------------------------
+
+@st.cache_data(show_spinner=False)
+def load_logo_data_uris():
+    """{clé enseigne normalisée: data URI PNG (réduit à ≤ 48 px de haut)}.
+    Les fichiers s'appellent « marionnaud.png », « logo-xxx.png », « WH Smith.png »…"""
+    out = {}
+    try:
+        d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logos")
+        for fn in os.listdir(d):
+            if not fn.lower().endswith(".png"):
+                continue
+            key = _norm_txt(os.path.splitext(fn)[0].replace("logo-", "").replace("-", " ")).strip()
+            if not key:
+                continue
+            path = os.path.join(d, fn)
+            try:
+                im = Image.open(path)
+                im.thumbnail((200, 48))
+                buf = io.BytesIO()
+                im.convert("RGBA").save(buf, "PNG", optimize=True)
+                data = buf.getvalue()
+            except Exception:
+                with open(path, "rb") as f:
+                    data = f.read()
+            out[key] = "data:image/png;base64," + base64.b64encode(data).decode()
+    except Exception:
+        pass
+    return out
+
+
+def logo_for(enseigne):
+    """Data URI du logo de l'enseigne (correspondance souple), sinon ''."""
+    e = _norm_txt(enseigne)
+    if not e:
+        return ""
+    logos = load_logo_data_uris()
+    if e in logos:
+        return logos[e]
+    for key, uri in logos.items():
+        if len(key) >= 4 and (key in e or e in key):
+            return uri
+    return ""
+
+
+def logo_img(enseigne, height=16):
+    """Balise <img> inline du logo (pour les cartes HTML), sinon ''."""
+    uri = logo_for(enseigne)
+    if not uri:
+        return ""
+    return f'<img src="{uri}" style="height:{height}px;vertical-align:middle;margin-right:6px;" alt="">'
+
+
 def _enseigne_reseau(layer, nom, enseignes_cfg):
     """Enseigne d'un magasin My Maps : match insensible aux accents/casse sur le
     calque et le nom, sinon libellé dérivé du calque (« NOCIBE FRANCE » → « Nocibe »)."""
@@ -2426,6 +2483,7 @@ _MAP_HTML_TEMPLATE = """
   #map { width:100%; height:100%; border-radius:16px; }
   .iw { max-width:250px; font-family:'Quicksand', -apple-system, sans-serif; color:#2C2C2A; }
   .iw h4 { margin:0 0 2px; font-size:15px; }
+  .iw .iwlogo { height:18px; vertical-align:middle; margin-right:6px; }
   .iw .meta { font-size:12px; color:#6B6B6B; margin-bottom:6px; }
   .iw .hist { font-size:12px; margin:2px 0; }
   .iw .histlink { color:__PRIMARY_DARK__; cursor:pointer; text-decoration:underline; }
@@ -2463,6 +2521,7 @@ window.addEventListener("error", function (e) {
 </script>
 <script>
 const DATA = __DATA__;
+const LOGOS = __LOGOS__;
 const COLORS = { client: "__PRIMARY__", prospect: "__PURPLE__", reseau: "__BLUE__" };
 const BADGES = {
   client:   '<span class="badge" style="background:__PRIMARY__;">💖 Client</span>',
@@ -2491,8 +2550,9 @@ function buildInfo(p, i) {
   const btnLabel = p.type === "client" ? "➕ Nouvelle visite ici"
                  : p.type === "prospect" ? "➕ Nouveau passage ici"
                  : "➕ Première visite ici";
+  const logo = LOGOS[p.ens_key] ? '<img class="iwlogo" src="' + LOGOS[p.ens_key] + '" alt="">' : '';
   return '<div class="iw">' +
-    '<h4>' + p.magasin + '</h4>' +
+    '<h4>' + logo + p.magasin + '</h4>' +
     '<div class="meta">' + (p.enseigne ? p.enseigne + ' · ' : '') + p.ville +
     (p.n > 0 ? ' · ' + p.n + ' passage(s)' : '') + '</div>' +
     BADGES[p.type] + fiche + histHtml +
@@ -2667,6 +2727,7 @@ def screen_map():
             "enseigne": html.escape(p["enseigne"]), "enseigne_raw": p["enseigne"],
             "type": p["type"], "lat": p["lat"], "lon": p["lon"],
             "approx": p["approx"], "n": p["n"],
+            "ens_key": _norm_txt(p["enseigne"]),
             "adresse": html.escape(p.get("adresse_reseau", "")),
             "tel": html.escape(p.get("tel", "")),
             "code": html.escape(p.get("code", "")),
@@ -2681,9 +2742,19 @@ def screen_map():
 
     # ensure_ascii=True : les caractères U+2028/U+2029 (et autres) sont échappés,
     # sinon ils cassent silencieusement tout le <script>. Idem pour "</script>".
+    # Logos des enseignes visibles (une seule data URI par enseigne, réutilisée)
+    logos_js = {}
+    for p in shown:
+        k = _norm_txt(p["enseigne"])
+        if k and k not in logos_js:
+            uri = logo_for(p["enseigne"])
+            if uri:
+                logos_js[k] = uri
+
     data_json = json.dumps(js_points, ensure_ascii=True).replace("</", "<\\/")
     map_html = (_MAP_HTML_TEMPLATE
                 .replace("__DATA__", data_json)
+                .replace("__LOGOS__", json.dumps(logos_js))
                 .replace("__API_KEY__", api_key)
                 .replace("__PRIMARY_DARK__", PRIMARY_DARK)
                 .replace("__PRIMARY__", PRIMARY)
@@ -2770,7 +2841,7 @@ def screen_visit_detail():
     projet = str(row.get("Projet", "")) if is_visit else ""
 
     lignes = [
-        f'<strong style="font-size:17px;">{html.escape(magasin)}</strong> · '
+        f'{logo_img(enseigne, height=22)}<strong style="font-size:17px;">{html.escape(magasin)}</strong> · '
         f'<span style="color:{PRIMARY};font-weight:600;">{html.escape(enseigne)}</span>',
         f'<span style="font-size:13px;color:{TEXT_SOFT};">📍 {html.escape(ville)}'
         + (f' · {html.escape(str(row.get("Adresse_complete", "")))}' if str(row.get("Adresse_complete", "")).strip() else "")
