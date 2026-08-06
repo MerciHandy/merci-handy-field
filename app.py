@@ -2328,10 +2328,32 @@ _MAP_HTML_TEMPLATE = """
                background:__PRIMARY__; color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
   .iw button:hover { background:__PRIMARY_DARK__; }
   .iw .approx { font-size:11px; color:#B26A00; margin-top:4px; }
+  #status { position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:99;
+            background:#fff; border:2px solid __PRIMARY__; border-radius:12px;
+            padding:8px 14px; font-size:13px; max-width:90%; box-shadow:0 2px 10px rgba(0,0,0,.15); }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="status">⏳ Chargement de la carte Google Maps…</div>
+<script>
+function setStatus(msg) {
+  const el = document.getElementById("status");
+  el.innerHTML = msg;
+  el.style.display = "block";
+}
+function hideStatus() { document.getElementById("status").style.display = "none"; }
+// Erreur d'authentification côté Google (clé invalide, API non activée, facturation,
+// restriction de référent…) : Google appelle ce hook global.
+window.gm_authFailure = function () {
+  setStatus("❌ <b>Google refuse la clé API.</b> Vérifie dans Google Cloud Console : " +
+            "1) « Maps JavaScript API » activée, 2) facturation activée sur le projet, " +
+            "3) restrictions de la clé (référent <code>merci-handy-field.streamlit.app/*</code>).");
+};
+window.addEventListener("error", function (e) {
+  setStatus("❌ Erreur : " + (e.message || "chargement impossible"));
+});
+</script>
 <script>
 const DATA = __DATA__;
 const COLORS = { client: "__PRIMARY__", prospect: "__PURPLE__", reseau: "__BLUE__" };
@@ -2378,43 +2400,53 @@ function selectStore(i) {
 }
 
 function initMap() {
+  // Centre France par défaut : même si tout le reste échoue, on voit une carte.
   map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat: 46.6, lng: 2.4 }, zoom: 6,
     mapTypeControl: false, streetViewControl: false,
     fullscreenControl: true, gestureHandling: "greedy",
   });
+  google.maps.event.addListenerOnce(map, "tilesloaded", hideStatus);
   infoWin = new google.maps.InfoWindow();
-  const bounds = new google.maps.LatLngBounds();
-  DATA.forEach((p, i) => {
-    const pos = { lat: p.lat, lng: p.lon };
-    bounds.extend(pos);
-    const marker = new google.maps.Marker({
-      position: pos, map: map, title: p.magasin_raw,
-      icon: {
-        path: "M12 0C5.9 0 1 4.9 1 11c0 7.4 11 21 11 21s11-13.6 11-21C23 4.9 18.1 0 12 0z",
-        fillColor: COLORS[p.type], fillOpacity: p.approx ? 0.55 : 1,
-        strokeColor: "#fff", strokeWeight: 1.5, scale: 1.15,
-        anchor: new google.maps.Point(12, 32),
-        labelOrigin: new google.maps.Point(12, 11.5),
-      },
-      label: p.n > 0 ? { text: String(p.n), color: "#fff", fontSize: "11px", fontWeight: "700" } : null,
-    });
-    marker.addListener("click", () => {
-      infoWin.setContent(buildInfo(p, i));
-      infoWin.open({ map: map, anchor: marker });
-    });
+  const valid = DATA.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)
+                               && !(Math.abs(p.lat) < 1 && Math.abs(p.lon) < 1));
+  valid.forEach(p => {
+    try {
+      const i = DATA.indexOf(p);
+      const marker = new google.maps.Marker({
+        position: { lat: p.lat, lng: p.lon }, map: map, title: p.magasin_raw,
+        icon: {
+          path: "M12 0C5.9 0 1 4.9 1 11c0 7.4 11 21 11 21s11-13.6 11-21C23 4.9 18.1 0 12 0z",
+          fillColor: COLORS[p.type], fillOpacity: p.approx ? 0.55 : 1,
+          strokeColor: "#fff", strokeWeight: 1.5, scale: 1.15,
+          anchor: new google.maps.Point(12, 32),
+          labelOrigin: new google.maps.Point(12, 11.5),
+        },
+        label: p.n > 0 ? { text: String(p.n), color: "#fff", fontSize: "11px", fontWeight: "700" } : null,
+      });
+      marker.addListener("click", () => {
+        infoWin.setContent(buildInfo(p, i));
+        infoWin.open({ map: map, anchor: marker });
+      });
+    } catch (e) { /* point invalide : on l'ignore, la carte reste utilisable */ }
   });
-  if (DATA.length > 0) {
+  // Cadrage : la métropole d'abord. Les points outre-mer / aberrants n'écartèlent
+  // pas la vue (sinon fitBounds centre la carte en plein océan).
+  const metro = valid.filter(p => p.lat > 41 && p.lat < 51.5 && p.lon > -5.8 && p.lon < 10);
+  const fitSet = (metro.length >= valid.length * 0.5 && metro.length > 0) ? metro : valid;
+  if (fitSet.length > 0) {
+    const bounds = new google.maps.LatLngBounds();
+    fitSet.forEach(p => bounds.extend({ lat: p.lat, lng: p.lon }));
     map.fitBounds(bounds, 48);
     google.maps.event.addListenerOnce(map, "idle", () => {
       if (map.getZoom() > 16) map.setZoom(16);
     });
-  } else {
-    map.setCenter({ lat: 46.6, lng: 2.4 });
-    map.setZoom(6);
   }
 }
 </script>
-<script async src="https://maps.googleapis.com/maps/api/js?key=__API_KEY__&callback=initMap&language=fr&region=FR"></script>
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key=__API_KEY__&callback=initMap&language=fr&region=FR"
+  onerror="setStatus('❌ Impossible de charger le script Google Maps (réseau ou bloqueur de contenu ?)')"></script>
 </body>
 </html>
 """
@@ -2497,8 +2529,11 @@ def screen_map():
             } for h in p["hist"]],
         })
 
+    # ensure_ascii=True : les caractères U+2028/U+2029 (et autres) sont échappés,
+    # sinon ils cassent silencieusement tout le <script>. Idem pour "</script>".
+    data_json = json.dumps(js_points, ensure_ascii=True).replace("</", "<\\/")
     map_html = (_MAP_HTML_TEMPLATE
-                .replace("__DATA__", json.dumps(js_points, ensure_ascii=False))
+                .replace("__DATA__", data_json)
                 .replace("__API_KEY__", api_key)
                 .replace("__PRIMARY_DARK__", PRIMARY_DARK)
                 .replace("__PRIMARY__", PRIMARY)
