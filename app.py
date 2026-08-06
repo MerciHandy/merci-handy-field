@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 import re
 import time
 import html
+import unicodedata
 from PIL import Image, ImageOps
 from streamlit_geolocation import streamlit_geolocation
 import streamlit.components.v1 as components
@@ -2081,7 +2082,7 @@ def geocode_addresses_batch(rows):
             "https://api-adresse.data.gouv.fr/search/csv/",
             files={"data": ("stores.csv", buf.getvalue().encode("utf-8"), "text/csv")},
             data={"columns": ["adresse", "city"], "postcode": "postcode"},
-            timeout=30,
+            timeout=90,  # ~1 650 adresses en un appel : laisser le temps à la BAN
         )
         if resp.status_code != 200:
             return out
@@ -2132,25 +2133,35 @@ def load_network_stores():
     for folder in folders:
         layer = (folder.findtext(f"{_KML_NS}name") or "").strip()
         for pm in folder.findall(f"{_KML_NS}Placemark"):
-            city = (pm.findtext(f"{_KML_NS}name") or "").strip()
+            pm_name = (pm.findtext(f"{_KML_NS}name") or "").strip()
             fields = {}
             ed = pm.find(f"{_KML_NS}ExtendedData")
             if ed is not None:
                 for d in ed.findall(f"{_KML_NS}Data"):
                     fields[d.get("name", "")] = (d.findtext(f"{_KML_NS}value") or "").strip()
 
+            # ⚠️ Chaque calque vient d'un import différent : les noms de champs varient
+            # (« unnamed (2) » = nom magasin chez Marionnaud, autre chose ailleurs).
+            # On reste générique : la balise <address> existe partout (My Maps géocode
+            # par adresse), et CP / téléphone se reconnaissent à leur forme.
+            adresse_tag = " ".join((pm.findtext(f"{_KML_NS}address") or "").split())
+            vals = list(fields.values())
+            adresse = adresse_tag or fields.get("unnamed (3)", "") or max(vals, key=len, default="")
+            tel = next((v for v in vals if re.fullmatch(r"0\d{9}", v)), "")
             code = fields.get("unnamed (1)", "")
-            nom = fields.get("unnamed (2)", "") or city
-            adresse = fields.get("unnamed (3)", "") or (pm.findtext(f"{_KML_NS}address") or "").strip()
-            cp = fields.get("unnamed (4)", "")
-            tel = fields.get("unnamed (6)", "")
-            if not cp:  # repli si les noms de champs changent : premier champ à 5 chiffres
-                cp = next((v for v in fields.values() if re.fullmatch(r"\d{5}", v)), "")
-            if not tel:
-                tel = next((v for v in fields.values() if re.fullmatch(r"0\d{9}", v)), "")
+            nom = fields.get("unnamed (2)", "") or pm_name
+
+            cp = next((v for v in vals if re.fullmatch(r"\d{5}", v)), "")
+            m_cp = re.search(r"\b(\d{5})\s+(.+?)\s*$", adresse)
+            city = ""
+            if m_cp:
+                cp = cp or m_cp.group(1)
+                city = m_cp.group(2)
+            if not city and pm_name and not any(ch.isdigit() for ch in pm_name):
+                city = pm_name
 
             # Ligne d'en-tête / gabarit du calque My Maps : pas un vrai magasin
-            if not re.fullmatch(r"\d{5}", cp) and not adresse:
+            if not adresse and not cp and not city:
                 continue
 
             lat = lon = None
@@ -2203,6 +2214,24 @@ def _dist_m(lat1, lon1, lat2, lon2):
     return (dlat ** 2 + dlon ** 2) ** 0.5
 
 
+def _norm_txt(s):
+    """Minuscules sans accents — pour comparer « NOCIBE » et « Nocibé »."""
+    s = unicodedata.normalize("NFD", str(s or ""))
+    return "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+
+
+def _enseigne_reseau(layer, nom, enseignes_cfg):
+    """Enseigne d'un magasin My Maps : match insensible aux accents/casse sur le
+    calque et le nom, sinon libellé dérivé du calque (« NOCIBE FRANCE » → « Nocibe »)."""
+    hay = _norm_txt(f"{layer} {nom}")
+    for e in enseignes_cfg:
+        ne = _norm_txt(e)
+        if ne and ne in hay:
+            return e
+    label = re.sub(r"\bfrance\b", "", str(layer or ""), flags=re.I).strip()
+    return label.title() if label else ""
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def build_map_points():
     """Agrège visites + démarchages par magasin (nom + ville).
@@ -2248,6 +2277,7 @@ def build_map_points():
                 s["lat"], s["lon"] = lat, lon
             detail = str(r.get("Etat", "") if kind == "visite" else r.get("Statut", "")).strip()
             s["hist"].append({
+                "id": str(r.get("ID", "")).strip(),
                 "date": str(r.get("Date", "")).strip(),
                 "detail": detail,
                 "commercial": str(r.get("Commercial", "")).strip(),
@@ -2280,7 +2310,7 @@ def build_map_points():
         except Exception:
             enseignes_cfg = list(DEFAULT_ENSEIGNES)
         for ns in network:
-            ens = detect_enseigne_from_name(f"{ns['layer']} {ns['nom']}", enseignes_cfg) or ""
+            ens = _enseigne_reseau(ns["layer"], ns["nom"], enseignes_cfg)
             match = None
             for p in points:
                 if p["magasin"].strip().lower() == ns["nom"].strip().lower():
@@ -2323,6 +2353,8 @@ _MAP_HTML_TEMPLATE = """
   .iw h4 { margin:0 0 2px; font-size:15px; }
   .iw .meta { font-size:12px; color:#6B6B6B; margin-bottom:6px; }
   .iw .hist { font-size:12px; margin:2px 0; }
+  .iw .histlink { color:__PRIMARY_DARK__; cursor:pointer; text-decoration:underline; }
+  .iw .histlink:hover { color:__PRIMARY__; }
   .iw .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:700; color:#fff; }
   .iw button { margin-top:8px; width:100%; border:none; border-radius:10px; padding:8px 10px;
                background:__PRIMARY__; color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
@@ -2367,8 +2399,14 @@ let map, infoWin;
 function buildInfo(p, i) {
   let histHtml = "";
   p.hist.forEach(h => {
-    histHtml += '<div class="hist">📅 ' + h.date + ' · ' + h.detail +
-                (h.commercial ? ' · <i>' + h.commercial + '</i>' : '') + '</div>';
+    const inner = '📅 ' + h.date + ' · ' + h.detail +
+                  (h.commercial ? ' · <i>' + h.commercial + '</i>' : '');
+    if (h.id) {
+      histHtml += '<div class="hist histlink" data-id="' + h.id + '" data-kind="' + h.kind + '">' +
+                  inner + ' →</div>';
+    } else {
+      histHtml += '<div class="hist">' + inner + '</div>';
+    }
   });
   if (p.type === "reseau") histHtml = '<div class="hist" style="color:#6B6B6B;">Jamais visité pour le moment.</div>';
   let fiche = "";
@@ -2399,6 +2437,18 @@ function selectStore(i) {
   window.parent.location.href = window.parent.location.pathname + "?" + params.toString();
 }
 
+function openVisit(id, kind) {
+  const params = new URLSearchParams({ visit_id: id, visit_kind: kind });
+  window.parent.location.href = window.parent.location.pathname + "?" + params.toString();
+}
+
+// Les lignes d'historique des InfoWindows sont créées dynamiquement :
+// un seul écouteur délégué suffit.
+document.addEventListener("click", function (e) {
+  const el = e.target.closest ? e.target.closest(".histlink") : null;
+  if (el) openVisit(el.dataset.id, el.dataset.kind);
+});
+
 function initMap() {
   // Centre France par défaut : même si tout le reste échoue, on voit une carte.
   map = new google.maps.Map(document.getElementById("map"), {
@@ -2410,11 +2460,12 @@ function initMap() {
   infoWin = new google.maps.InfoWindow();
   const valid = DATA.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)
                                && !(Math.abs(p.lat) < 1 && Math.abs(p.lon) < 1));
+  const markers = [];
   valid.forEach(p => {
     try {
       const i = DATA.indexOf(p);
       const marker = new google.maps.Marker({
-        position: { lat: p.lat, lng: p.lon }, map: map, title: p.magasin_raw,
+        position: { lat: p.lat, lng: p.lon }, title: p.magasin_raw,
         icon: {
           path: "M12 0C5.9 0 1 4.9 1 11c0 7.4 11 21 11 21s11-13.6 11-21C23 4.9 18.1 0 12 0z",
           fillColor: COLORS[p.type], fillOpacity: p.approx ? 0.55 : 1,
@@ -2428,8 +2479,16 @@ function initMap() {
         infoWin.setContent(buildInfo(p, i));
         infoWin.open({ map: map, anchor: marker });
       });
+      markers.push(marker);
     } catch (e) { /* point invalide : on l'ignore, la carte reste utilisable */ }
   });
+  // Regroupement en clusters au-delà de 150 marqueurs (fluidité mobile).
+  // Si la librairie n'a pas chargé, on pose les marqueurs directement.
+  if (window.markerClusterer && markerClusterer.MarkerClusterer && markers.length > 150) {
+    new markerClusterer.MarkerClusterer({ map: map, markers: markers });
+  } else {
+    markers.forEach(m => m.setMap(map));
+  }
   // Cadrage : la métropole d'abord. Les points outre-mer / aberrants n'écartèlent
   // pas la vue (sinon fitBounds centre la carte en plein océan).
   const metro = valid.filter(p => p.lat > 41 && p.lat < 51.5 && p.lon > -5.8 && p.lon < 10);
@@ -2444,6 +2503,7 @@ function initMap() {
   }
 }
 </script>
+<script src="https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js"></script>
 <script async
   src="https://maps.googleapis.com/maps/api/js?key=__API_KEY__&callback=initMap&language=fr&region=FR"
   onerror="setStatus('❌ Impossible de charger le script Google Maps (réseau ou bloqueur de contenu ?)')"></script>
@@ -2494,6 +2554,19 @@ def screen_map():
         visible_types.add("reseau")
     shown = [p for p in points if p["type"] in visible_types]
 
+    # Filtre par enseigne (les enseignes viennent des visites ET du réseau My Maps)
+    def _ens_label(p):
+        return p["enseigne"] or "Autre / inconnue"
+    all_enseignes = sorted({_ens_label(p) for p in points}, key=str.lower)
+    sel_enseignes = st.multiselect(
+        "🏷️ Filtrer par enseigne (vide = toutes)",
+        all_enseignes,
+        default=[],
+        placeholder="Toutes les enseignes",
+    )
+    if sel_enseignes:
+        shown = [p for p in shown if _ens_label(p) in sel_enseignes]
+
     nb_clients = sum(1 for p in shown if p["type"] == "client")
     nb_prospects = sum(1 for p in shown if p["type"] == "prospect")
     nb_reseau = sum(1 for p in shown if p["type"] == "reseau")
@@ -2523,6 +2596,8 @@ def screen_map():
             "tel": html.escape(p.get("tel", "")),
             "code": html.escape(p.get("code", "")),
             "hist": [{
+                "id": html.escape(h.get("id", "")),
+                "kind": h.get("kind", "visite"),
                 "date": html.escape(h["date"]),
                 "detail": html.escape(h["detail"]),
                 "commercial": html.escape(h["commercial"]),
@@ -2553,8 +2628,84 @@ def screen_map():
                    "soit la carte My Maps est momentanément inaccessible (elle doit rester "
                    "partagée « accessible via le lien »).")
     st.caption("🏪 Réseau synchronisé depuis ta carte My Maps « Carte FIELD MERCI HANDY » "
-               "(rafraîchi toutes les heures). 💡 Clique un marqueur pour voir l'historique "
-               "et démarrer une visite pré-remplie.")
+               "(rafraîchi toutes les heures). 💡 Clique un marqueur pour voir l'historique, "
+               "une ligne de l'historique pour ouvrir la visite, ou le bouton pour en démarrer une.")
+
+
+def screen_visit_detail():
+    info = st.session_state.get("visit_detail") or {}
+    vid = str(info.get("id", "")).strip()
+    kind = info.get("kind", "visite")
+    is_visit = kind != "prospect"
+
+    st.markdown(
+        f'<div class="main-header">'
+        f'<h1>{"📝 Détail de la visite" if is_visit else "🔍 Détail du démarchage"}</h1>'
+        f'<p>Ouvert depuis la carte</p>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    if st.button("← Retour à la carte"):
+        st.session_state.screen = "map"
+        st.rerun()
+
+    df = load_visits() if is_visit else load_prospects()
+    row = None
+    if not df.empty and "ID" in df.columns:
+        matches = df[df["ID"].astype(str).str.strip() == vid]
+        if not matches.empty:
+            row = matches.iloc[0]
+    if row is None:
+        st.error("Visite introuvable (elle a peut-être été supprimée).")
+        return
+
+    magasin = str(row.get("Magasin", ""))
+    ville = str(row.get("Ville", ""))
+    enseigne = str(row.get("Enseigne", ""))
+    detail = str(row.get("Etat", "") if is_visit else row.get("Statut", ""))
+    texte = str(row.get("Commentaire", "") if is_visit else row.get("Notes", ""))
+    projet = str(row.get("Projet", "")) if is_visit else ""
+
+    lignes = [
+        f'<strong style="font-size:17px;">{html.escape(magasin)}</strong> · '
+        f'<span style="color:{PRIMARY};font-weight:600;">{html.escape(enseigne)}</span>',
+        f'<span style="font-size:13px;color:{TEXT_SOFT};">📍 {html.escape(ville)}'
+        + (f' · {html.escape(str(row.get("Adresse_complete", "")))}' if str(row.get("Adresse_complete", "")).strip() else "")
+        + '</span>',
+        f'<span style="font-size:13px;">📅 {html.escape(str(row.get("Date", "")))} à '
+        f'{html.escape(str(row.get("Heure", "")))} · 👤 {html.escape(str(row.get("Commercial", "")))}</span>',
+    ]
+    if projet:
+        lignes.append(f'<span style="font-size:13px;">🚀 {html.escape(projet)}</span>')
+    if detail:
+        lignes.append(f'<span style="font-size:14px;">{html.escape(detail)}</span>')
+    if texte:
+        lignes.append(f'<span style="font-size:14px;">💬 {html.escape(texte)}</span>')
+    st.markdown('<div class="visit-card">' + "<br>".join(lignes) + '</div>', unsafe_allow_html=True)
+
+    photos_str = str(row.get("Photos_URLs", "")).strip()
+    urls = [u.strip() for u in photos_str.split("|") if u.strip()]
+    if urls:
+        st.markdown('<div class="section-title">📸 Photos</div>', unsafe_allow_html=True)
+        cols = st.columns(2)
+        for i, u in enumerate(urls):
+            with cols[i % 2]:
+                try:
+                    st.image(make_fullsize_url(u), use_container_width=True)
+                except Exception:
+                    st.markdown(f"[Photo {i + 1}]({u})")
+
+    st.write("")
+    label = "➕ Nouvelle visite dans ce magasin" if is_visit else "➕ Nouveau passage dans ce magasin"
+    if st.button(label, use_container_width=True, type="primary"):
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
+            st.session_state.pop(k, None)
+        st.session_state.map_prefill = {"magasin": magasin, "ville": ville, "enseigne": enseigne}
+        st.session_state.screen = "new_visit" if is_visit else "new_prospect"
+        st.rerun()
 
 
 def screen_admin_login():
@@ -3247,6 +3398,15 @@ else:
         st.session_state.screen = "new_prospect" if _qp.get("map_action") == "prospect" else "new_visit"
         st.query_params.clear()
 
+    # Ouverture d'une visite précise depuis l'historique d'une InfoWindow de la carte
+    if "visit_id" in _qp:
+        st.session_state.visit_detail = {
+            "id": _qp.get("visit_id", ""),
+            "kind": _qp.get("visit_kind", "visite"),
+        }
+        st.session_state.screen = "visit_detail"
+        st.query_params.clear()
+
     screen = st.session_state.screen
 
     if screen == "home":
@@ -3259,6 +3419,8 @@ else:
         screen_new_prospect()
     elif screen == "map":
         screen_map()
+    elif screen == "visit_detail":
+        screen_visit_detail()
     elif screen == "history":
         screen_history()
     elif screen == "dashboard":
