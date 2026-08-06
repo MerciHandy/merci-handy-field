@@ -2226,9 +2226,18 @@ def _tokens(s):
 
 
 def _cp_of(ville):
-    """Code postal d'un libellé « Ville (75011) », sinon ''."""
-    m = re.search(r"\((\d{5})\)", str(ville or ""))
-    return m.group(1) if m else ""
+    """Code postal d'un libellé « Ville (75011) » — ou d'une ville saisie « 75014 »."""
+    v = str(ville or "").strip()
+    m = re.search(r"\((\d{5})\)", v)
+    if m:
+        return m.group(1)
+    return v if re.fullmatch(r"\d{5}", v) else ""
+
+
+def _city_of(ville):
+    """Nom de ville normalisé d'un libellé « Ville (75011) » (sans le CP), sinon ''."""
+    v = re.sub(r"\(\s*\d{5}\s*\)", "", str(ville or "")).strip()
+    return "" if re.fullmatch(r"\d*", v) else _norm_txt(v)
 
 
 def _enseigne_reseau(layer, nom, enseignes_cfg):
@@ -2322,33 +2331,39 @@ def build_map_points():
             enseignes_cfg = list(DEFAULT_ENSEIGNES)
         # Unicité enseigne/CP : si Nocibé n'a qu'UN magasin à Lille (59000), une
         # visite « Nocibé » à Lille peut lui être rattachée sans ambiguïté.
-        # Mots trop génériques pour identifier un magasin
-        _STOP = {"centre", "commercial", "france", "rue", "avenue", "place", "les", "grand", "grande"}
-        ens_cp_count = {}
+        # Mots trop génériques pour identifier un magasin (gares, saints, voies…)
+        _STOP = {"centre", "commercial", "france", "rue", "avenue", "place", "les", "grand", "grande",
+                 "gare", "saint", "sainte", "boulevard", "faubourg", "fbg", "porte", "cour", "cours",
+                 "monop", "daily", "beauty", "ville", "nord", "sud", "est", "ouest"}
+        cnt_cp, cnt_city = {}, {}
         ns_meta = []
         for ns in network:
             ens = _enseigne_reseau(ns["layer"], ns["nom"], enseignes_cfg)
-            key = (_norm_txt(ens), ns.get("cp", ""))
-            ens_cp_count[key] = ens_cp_count.get(key, 0) + 1
+            ens_norm = _norm_txt(ens)
+            ns_cp = ns.get("cp", "")
+            ns_city = _norm_txt(ns.get("city", ""))
+            if ns_cp:
+                cnt_cp[(ens_norm, ns_cp)] = cnt_cp.get((ens_norm, ns_cp), 0) + 1
+            if ns_city:
+                cnt_city[(ens_norm, ns_city)] = cnt_city.get((ens_norm, ns_city), 0) + 1
             # Mots distinctifs du nom : sans l'enseigne, la ville ni les mots génériques
             distinct = _tokens(ns["nom"]) - _tokens(ens) - _tokens(ns.get("city", "")) - _STOP
-            ns_meta.append((ns, ens, distinct))
+            ns_meta.append((ns, ens, ens_norm, ns_cp, ns_city, distinct))
 
         # Précalcul côté visites (les points réseau ajoutés ensuite n'y figurent pas)
         p_meta = {
             idx: (_norm_txt(p["magasin"]),
                   _tokens(p["magasin"]) - _tokens(p["enseigne"]) - _tokens(p["ville"]) - _STOP,
                   _cp_of(p["ville"]),
+                  _city_of(p["ville"]),
                   _norm_txt(p["enseigne"]))
             for idx, p in enumerate(points)
         }
 
         used = set()  # une visite ne peut absorber qu'UN magasin du réseau
-        for ns, ens, ns_tokens in ns_meta:
-            ens_norm = _norm_txt(ens)
-            unique = ens_cp_count.get((ens_norm, ns.get("cp", "")), 0) == 1
+        for ns, ens, ens_norm, ns_cp, ns_city, ns_tokens in ns_meta:
             match_idx = None
-            for idx, (p_nom, p_tokens, p_cp, p_ens) in p_meta.items():
+            for idx, (p_nom, p_tokens, p_cp, p_city, p_ens) in p_meta.items():
                 if idx in used:
                     continue
                 p = points[idx]
@@ -2360,11 +2375,21 @@ def build_map_points():
                 if not p["approx"] and _dist_m(p["lat"], p["lon"], ns["lat"], ns["lon"]) < 150:
                     match_idx = idx
                     break
-                # 3) rapprochement par code postal : même enseigne unique dans la
-                #    ville, ou ≥ 2 mots communs entre les noms
-                if p_cp and p_cp == ns.get("cp", ""):
-                    same_ens = p_ens != "" and p_ens == ens_norm
-                    if (same_ens and unique) or len(p_tokens & ns_tokens) >= 1:
+                # 3) rapprochement par lieu : même CP, ou même nom de ville
+                same_place = (p_cp and p_cp == ns_cp) or (p_city and ns_city and p_city == ns_city)
+                if same_place:
+                    # enseigne compatible : égale, contenue (« Galeries Lafayettes »/
+                    # « Galeries Lafayette ») ou présente dans le nom du magasin
+                    ens_ok = bool(ens_norm) and (
+                        (p_ens and (p_ens in ens_norm or ens_norm in p_ens))
+                        or ens_norm in p_nom
+                    )
+                    if p_cp and p_cp == ns_cp:
+                        unique_here = cnt_cp.get((ens_norm, ns_cp), 0) == 1
+                    else:
+                        unique_here = cnt_city.get((ens_norm, ns_city), 0) == 1
+                    common = len(p_tokens & ns_tokens)
+                    if (ens_ok and (unique_here or common >= 1)) or common >= 2:
                         match_idx = idx
                         break
             if match_idx is not None:
