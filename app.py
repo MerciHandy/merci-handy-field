@@ -2673,6 +2673,26 @@ def screen_map():
                    "réseau My Maps (nom identique, GPS < 150 m, ou même enseigne/ville sans ambiguïté) "
                    "— leur historique s'affiche sur le marqueur officiel du magasin.")
 
+    non_rattaches = [p for p in points if p["type"] != "reseau" and not p.get("code")]
+    if non_rattaches:
+        with st.expander(f"🧩 {len(non_rattaches)} magasin(s) visité(s) non rattaché(s) — voir la liste"):
+            st.caption(
+                "Causes fréquentes : ville sans code postal (ancien format), plusieurs magasins "
+                "de la même enseigne dans la même ville (ambigu — non rattaché volontairement), "
+                "nom trop différent de la fiche My Maps, ou magasin absent du réseau (pharmacies, "
+                "indépendants…). Pour rattacher : corrige le nom ou la ville dans l'onglet Admin → "
+                "Visites, ou refais la prochaine visite en la sélectionnant depuis la carte."
+            )
+            for p in sorted(non_rattaches, key=lambda x: (str(x["enseigne"]).lower(), str(x["magasin"]).lower())):
+                type_emoji = "💖" if p["type"] == "client" else "🔍"
+                cp_warn = "" if _cp_of(p["ville"]) else " · ⚠️ ville sans (CP)"
+                st.markdown(
+                    f"{type_emoji} **{html.escape(str(p['magasin']))}** · "
+                    f"{html.escape(str(p['enseigne']) or '—')} · "
+                    f"{html.escape(str(p['ville']) or 'ville ?')} · "
+                    f"{p['n']} passage(s){cp_warn}"
+                )
+
     notes = []
     if nb_approx:
         notes.append(f"{nb_approx} magasin(s) sans GPS placé(s) au centre de leur ville (marqueur pâle)")
