@@ -2060,6 +2060,46 @@ def get_mymaps_mid():
         return MYMAPS_MID_DEFAULT
 
 
+@st.cache_data(ttl=7 * 86400, show_spinner=False)
+def geocode_addresses_batch(rows):
+    """Géocode un lot d'adresses en UN SEUL appel via la BAN (api-adresse.data.gouv.fr).
+
+    rows : tuple de (id, adresse, cp, ville). Renvoie {id: (lat, lon)}.
+    Indispensable : le KML My Maps n'exporte pas de coordonnées, et géocoder
+    ~100 magasins un par un bloquait le chargement de la carte.
+    """
+    import csv as _csv
+    buf = io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["id", "adresse", "postcode", "city"])
+    for rid, adresse, cp, city in rows:
+        w.writerow([rid, adresse, cp, city])
+
+    out = {}
+    try:
+        resp = requests.post(
+            "https://api-adresse.data.gouv.fr/search/csv/",
+            files={"data": ("stores.csv", buf.getvalue().encode("utf-8"), "text/csv")},
+            data={"columns": ["adresse", "city"], "postcode": "postcode"},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return out
+        reader = _csv.DictReader(io.StringIO(resp.content.decode("utf-8")))
+        for r in reader:
+            try:
+                lat = float(r.get("latitude") or r.get("result_latitude") or "")
+                lon = float(r.get("longitude") or r.get("result_longitude") or "")
+                score = float(r.get("result_score") or 0)
+            except Exception:
+                continue
+            if score >= 0.3:
+                out[str(r.get("id", ""))] = (lat, lon)
+    except Exception:
+        return out
+    return out
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_network_stores():
     """Magasins du réseau depuis la carte My Maps (export KML, rafraîchi toutes les heures).
@@ -2109,6 +2149,10 @@ def load_network_stores():
             if not tel:
                 tel = next((v for v in fields.values() if re.fullmatch(r"0\d{9}", v)), "")
 
+            # Ligne d'en-tête / gabarit du calque My Maps : pas un vrai magasin
+            if not re.fullmatch(r"\d{5}", cp) and not adresse:
+                continue
+
             lat = lon = None
             coords_text = (pm.findtext(f"{_KML_NS}Point/{_KML_NS}coordinates") or "").strip()
             parts = coords_text.split(",")
@@ -2121,18 +2165,34 @@ def load_network_stores():
             ville = ""
             if city:
                 ville = f"{city.title()} ({cp})" if cp else city.title()
-            if lat is None and ville:
-                centre = geocode_ville(ville)
-                if centre:
-                    lat, lon = centre
-            if lat is None:
-                continue
 
             stores.append({
                 "nom": nom, "code": code, "ville": ville, "adresse": adresse,
-                "tel": tel, "layer": layer, "lat": lat, "lon": lon,
+                "cp": cp, "city": city, "tel": tel, "layer": layer,
+                "lat": lat, "lon": lon, "approx": False,
             })
-    return stores
+
+    # Ce KML My Maps n'exporte pas de <Point> : géocodage de toutes les adresses
+    # manquantes en un seul appel batch (BAN), repli centre-ville sinon.
+    to_geo = tuple(
+        (str(i), s["adresse"], s["cp"], s["city"])
+        for i, s in enumerate(stores) if s["lat"] is None
+    )
+    if to_geo:
+        found = geocode_addresses_batch(to_geo)
+        for i, s in enumerate(stores):
+            if s["lat"] is not None:
+                continue
+            c = found.get(str(i))
+            if c:
+                s["lat"], s["lon"] = c
+            elif s["ville"]:
+                centre = geocode_ville(s["ville"])
+                if centre:
+                    s["lat"], s["lon"] = centre
+                    s["approx"] = True
+
+    return [s for s in stores if s["lat"] is not None]
 
 
 def _dist_m(lat1, lon1, lat2, lon2):
@@ -2238,10 +2298,12 @@ def build_map_points():
                 if ens and not match["enseigne"]:
                     match["enseigne"] = ens
             else:
+                if ns.get("approx"):
+                    nb_approx += 1
                 points.append({
                     "magasin": ns["nom"], "ville": ns["ville"], "enseigne": ens,
                     "type": "reseau", "lat": ns["lat"], "lon": ns["lon"],
-                    "approx": False, "n": 0, "hist": [],
+                    "approx": bool(ns.get("approx")), "n": 0, "hist": [],
                     "code": ns["code"], "tel": ns["tel"], "adresse_reseau": ns["adresse"],
                 })
 
