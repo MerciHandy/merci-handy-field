@@ -1295,7 +1295,8 @@ def screen_home():
         st.session_state.screen = "new_visit"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill",
+                  "visit_ens_pick", "prospect_ens_pick"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1303,7 +1304,8 @@ def screen_home():
         st.session_state.screen = "prospect_home"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill",
+                  "visit_ens_pick", "prospect_ens_pick"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1470,6 +1472,12 @@ def screen_new_visit():
     elif map_prefill.get("enseigne") in enseignes:
         default_enseigne_idx = enseignes.index(map_prefill["enseigne"])
 
+    # Enseigne en un clic sur son logo (le choix reste modifiable dans le formulaire)
+    st.markdown('<div class="section-title">🏷️ Enseigne</div>', unsafe_allow_html=True)
+    ens_pick = enseigne_logo_picker("visit", enseignes)
+    if ens_pick in enseignes:
+        default_enseigne_idx = enseignes.index(ens_pick)
+
     # Ville : hors du formulaire pour que les suggestions se rafraîchissent à la saisie
     ville = ville_input("visit", default_ville)
 
@@ -1554,7 +1562,8 @@ def screen_new_visit():
             st.balloons()
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill",
+                  "visit_ens_pick", "prospect_ens_pick"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "home"
             st.rerun()
@@ -1598,7 +1607,8 @@ def screen_prospect_home():
         st.session_state.screen = "new_prospect"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill",
+                  "visit_ens_pick", "prospect_ens_pick"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1744,6 +1754,12 @@ def screen_new_prospect():
     elif map_prefill.get("enseigne") in enseignes:
         default_enseigne_idx = enseignes.index(map_prefill["enseigne"])
 
+    # Enseigne en un clic sur son logo (le choix reste modifiable dans le formulaire)
+    st.markdown('<div class="section-title">🏷️ Enseigne</div>', unsafe_allow_html=True)
+    ens_pick = enseigne_logo_picker("prospect", enseignes)
+    if ens_pick in enseignes:
+        default_enseigne_idx = enseignes.index(ens_pick)
+
     # Ville : hors du formulaire pour que les suggestions se rafraîchissent à la saisie
     ville = ville_input("prospect", default_ville)
 
@@ -1818,7 +1834,8 @@ def screen_new_prospect():
             st.balloons()
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill",
+                  "visit_ens_pick", "prospect_ens_pick"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "prospect_home"
             st.rerun()
@@ -2295,6 +2312,35 @@ def logo_img(enseigne, height=16):
     if not uri:
         return ""
     return f'<img src="{uri}" style="height:{height}px;vertical-align:middle;margin-right:6px;" alt="">'
+
+
+def enseigne_logo_picker(key_prefix, enseignes):
+    """Grille de logos cliquables pour choisir l'enseigne. À placer HORS du st.form
+    (un clic doit relancer le script). Renvoie l'enseigne choisie ou None.
+    Re-cliquer le même logo désélectionne. Les enseignes sans logo restent
+    accessibles via la liste déroulante du formulaire."""
+    avec_logo = [(e, logo_for(e)) for e in enseignes]
+    avec_logo = [(e, u) for e, u in avec_logo if u]
+    if not avec_logo:
+        return None
+    pick_key = f"{key_prefix}_ens_pick"
+    ncols = 4
+    cols = st.columns(ncols)
+    for i, (e, uri) in enumerate(avec_logo):
+        with cols[i % ncols]:
+            sel = st.session_state.get(pick_key) == e
+            border = f"2px solid {PRIMARY}" if sel else f"1px solid {BORDER_SOFT}"
+            st.markdown(
+                f'<div style="text-align:center;border:{border};border-radius:12px;'
+                f'padding:6px 4px;background:#fff;height:44px;display:flex;'
+                f'align-items:center;justify-content:center;">'
+                f'<img src="{uri}" style="max-height:26px;max-width:92%;" alt="{html.escape(e)}"></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button(("✓ " if sel else "") + e, key=f"{pick_key}_btn_{i}", use_container_width=True):
+                st.session_state[pick_key] = None if sel else e
+                st.rerun()
+    return st.session_state.get(pick_key)
 
 
 def _enseigne_reseau(layer, nom, enseignes_cfg):
@@ -2874,7 +2920,8 @@ def screen_visit_detail():
     if st.button(label, use_container_width=True, type="primary"):
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box",
+                  "visit_ens_pick", "prospect_ens_pick"]:
             st.session_state.pop(k, None)
         st.session_state.map_prefill = {"magasin": magasin, "ville": ville, "enseigne": enseigne}
         st.session_state.screen = "new_visit" if is_visit else "new_prospect"
@@ -3561,7 +3608,7 @@ else:
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
                   "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box",
-                  "map_prefill"]:
+                  "map_prefill", "visit_ens_pick", "prospect_ens_pick"]:
             st.session_state.pop(k, None)
         st.session_state.map_prefill = {
             "magasin": _qp.get("map_mag", ""),
