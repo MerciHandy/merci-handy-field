@@ -11,13 +11,16 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import io
+import json
 import uuid
 import requests
+import xml.etree.ElementTree as ET
 import re
 import time
 import html
 from PIL import Image, ImageOps
 from streamlit_geolocation import streamlit_geolocation
+import streamlit.components.v1 as components
 import cloudinary
 import cloudinary.uploader
 from streamlit_local_storage import LocalStorage
@@ -1289,7 +1292,7 @@ def screen_home():
         st.session_state.screen = "new_visit"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1297,8 +1300,12 @@ def screen_home():
         st.session_state.screen = "prospect_home"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
             st.session_state.pop(k, None)
+        st.rerun()
+
+    if st.button("🗺️  Carte des magasins", use_container_width=True):
+        st.session_state.screen = "map"
         st.rerun()
 
     st.write("")
@@ -1439,14 +1446,25 @@ def screen_new_visit():
     st.markdown('<div class="section-title">📝 Étape 2 — Remplis les détails</div>', unsafe_allow_html=True)
 
     selected_shop = st.session_state.get("geo_selected")
-    default_magasin = selected_shop["name"] if selected_shop else ""
-    default_ville = st.session_state.get("geo_city", "")
+    map_prefill = st.session_state.get("map_prefill") or {}
+    default_magasin = selected_shop["name"] if selected_shop else map_prefill.get("magasin", "")
+    default_ville = st.session_state.get("geo_city", "") or map_prefill.get("ville", "")
+
+    if map_prefill.get("magasin") and not selected_shop:
+        st.markdown(f"""
+        <div class="geoloc-detected">
+            <strong>🗺️ Magasin sélectionné depuis la carte</strong><br>
+            <span style="font-size:13px;">{html.escape(map_prefill.get("magasin", ""))} · {html.escape(map_prefill.get("ville", ""))}</span>
+        </div>
+        """, unsafe_allow_html=True)
 
     default_enseigne_idx = 0
     if selected_shop:
         detected_enseigne = detect_enseigne_from_name(selected_shop["name"], enseignes)
         if detected_enseigne and detected_enseigne in enseignes:
             default_enseigne_idx = enseignes.index(detected_enseigne)
+    elif map_prefill.get("enseigne") in enseignes:
+        default_enseigne_idx = enseignes.index(map_prefill["enseigne"])
 
     # Ville : hors du formulaire pour que les suggestions se rafraîchissent à la saisie
     ville = ville_input("visit", default_ville)
@@ -1532,7 +1550,7 @@ def screen_new_visit():
             st.balloons()
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "home"
             st.rerun()
@@ -1576,7 +1594,7 @@ def screen_prospect_home():
         st.session_state.screen = "new_prospect"
         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -1679,8 +1697,17 @@ def screen_new_prospect():
 
     # ============= MÉMOIRE MAGASIN =============
     selected_shop = st.session_state.get("geo_selected")
-    default_magasin = selected_shop["name"] if selected_shop else ""
-    default_ville = st.session_state.get("geo_city", "")
+    map_prefill = st.session_state.get("map_prefill") or {}
+    default_magasin = selected_shop["name"] if selected_shop else map_prefill.get("magasin", "")
+    default_ville = st.session_state.get("geo_city", "") or map_prefill.get("ville", "")
+
+    if map_prefill.get("magasin") and not selected_shop:
+        st.markdown(f"""
+        <div class="geoloc-detected">
+            <strong>🗺️ Magasin sélectionné depuis la carte</strong><br>
+            <span style="font-size:13px;">{html.escape(map_prefill.get("magasin", ""))} · {html.escape(map_prefill.get("ville", ""))}</span>
+        </div>
+        """, unsafe_allow_html=True)
 
     if default_magasin:
         hist = prospect_history_for(default_magasin)
@@ -1709,6 +1736,8 @@ def screen_new_prospect():
         detected_enseigne = detect_enseigne_from_name(selected_shop["name"], enseignes)
         if detected_enseigne and detected_enseigne in enseignes:
             default_enseigne_idx = enseignes.index(detected_enseigne)
+    elif map_prefill.get("enseigne") in enseignes:
+        default_enseigne_idx = enseignes.index(map_prefill["enseigne"])
 
     # Ville : hors du formulaire pour que les suggestions se rafraîchissent à la saisie
     ville = ville_input("prospect", default_ville)
@@ -1784,7 +1813,7 @@ def screen_new_prospect():
             st.balloons()
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
-                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box"]:
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill"]:
                 st.session_state.pop(k, None)
             st.session_state.screen = "prospect_home"
             st.rerun()
@@ -1965,6 +1994,470 @@ def screen_dashboard():
         "text/csv",
         use_container_width=True
     )
+
+
+# =========================================================================
+# CARTE GOOGLE MAPS — visites + historique
+# =========================================================================
+
+def get_gmaps_api_key():
+    """Clé API Google Maps JavaScript — dans st.secrets["gmaps_api_key"]."""
+    try:
+        return str(st.secrets.get("gmaps_api_key", "")).strip()
+    except Exception:
+        return ""
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def geocode_ville(ville_label):
+    """Centre approximatif d'une commune depuis « Ville (CP) » via geo.api.gouv.fr.
+    Renvoie (lat, lon) ou None. Sert de repli pour les magasins sans GPS enregistré."""
+    q = str(ville_label or "").strip()
+    if not q:
+        return None
+    m = re.match(r"^(.*?)\(\s*(\d{5})\s*\)\s*$", q)
+    try:
+        if m:
+            params = {"codePostal": m.group(2), "fields": "nom,centre", "limit": 5}
+            nom_attendu = m.group(1).strip().lower()
+        else:
+            params = {"nom": q, "fields": "nom,centre", "boost": "population", "limit": 1}
+            nom_attendu = q.lower()
+        resp = requests.get("https://geo.api.gouv.fr/communes", params=params, timeout=5)
+        if resp.status_code != 200:
+            return None
+        communes = resp.json()
+        if not isinstance(communes, list) or not communes:
+            return None
+        best = next((c for c in communes if str(c.get("nom", "")).strip().lower() == nom_attendu), communes[0])
+        coords = (best.get("centre") or {}).get("coordinates")
+        if coords and len(coords) == 2:
+            return (float(coords[1]), float(coords[0]))  # geo.api renvoie [lon, lat]
+    except Exception:
+        return None
+    return None
+
+
+def _to_float(v):
+    try:
+        x = float(str(v).strip().replace(",", "."))
+        return x if x != 0 else None
+    except Exception:
+        return None
+
+
+# --- Réseau de magasins : carte My Maps « Carte FIELD MERCI HANDY » ---------
+# La carte doit rester partagée « accessible via le lien » pour que l'export KML
+# fonctionne. Le mid peut être remplacé via st.secrets["mymaps_mid"].
+MYMAPS_MID_DEFAULT = "10bK191x31-PhfDvkdEubAm1ZHXuoCpA"
+_KML_NS = "{http://www.opengis.net/kml/2.2}"
+
+
+def get_mymaps_mid():
+    try:
+        return str(st.secrets.get("mymaps_mid", MYMAPS_MID_DEFAULT)).strip()
+    except Exception:
+        return MYMAPS_MID_DEFAULT
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_network_stores():
+    """Magasins du réseau depuis la carte My Maps (export KML, rafraîchi toutes les heures).
+
+    Chaque calque (Folder) est une enseigne (ex. « MARIONNAUD FRANCE »).
+    ExtendedData My Maps : unnamed (1)=code, (2)=nom, (3)=adresse, (4)=CP, (6)=téléphone.
+    Renvoie une liste de dicts {nom, code, ville, adresse, tel, layer, lat, lon}.
+    """
+    mid = get_mymaps_mid()
+    if not mid:
+        return []
+    try:
+        resp = requests.get(
+            "https://www.google.com/maps/d/kml",
+            params={"mid": mid, "forcekml": "1"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        root = ET.fromstring(resp.content)
+    except Exception:
+        return []
+
+    doc = root.find(f"{_KML_NS}Document")
+    if doc is None:
+        return []
+    folders = doc.findall(f"{_KML_NS}Folder") or [doc]
+
+    stores = []
+    for folder in folders:
+        layer = (folder.findtext(f"{_KML_NS}name") or "").strip()
+        for pm in folder.findall(f"{_KML_NS}Placemark"):
+            city = (pm.findtext(f"{_KML_NS}name") or "").strip()
+            fields = {}
+            ed = pm.find(f"{_KML_NS}ExtendedData")
+            if ed is not None:
+                for d in ed.findall(f"{_KML_NS}Data"):
+                    fields[d.get("name", "")] = (d.findtext(f"{_KML_NS}value") or "").strip()
+
+            code = fields.get("unnamed (1)", "")
+            nom = fields.get("unnamed (2)", "") or city
+            adresse = fields.get("unnamed (3)", "") or (pm.findtext(f"{_KML_NS}address") or "").strip()
+            cp = fields.get("unnamed (4)", "")
+            tel = fields.get("unnamed (6)", "")
+            if not cp:  # repli si les noms de champs changent : premier champ à 5 chiffres
+                cp = next((v for v in fields.values() if re.fullmatch(r"\d{5}", v)), "")
+            if not tel:
+                tel = next((v for v in fields.values() if re.fullmatch(r"0\d{9}", v)), "")
+
+            lat = lon = None
+            coords_text = (pm.findtext(f"{_KML_NS}Point/{_KML_NS}coordinates") or "").strip()
+            parts = coords_text.split(",")
+            if len(parts) >= 2:
+                try:
+                    lon, lat = float(parts[0]), float(parts[1])
+                except Exception:
+                    lat = lon = None
+
+            ville = ""
+            if city:
+                ville = f"{city.title()} ({cp})" if cp else city.title()
+            if lat is None and ville:
+                centre = geocode_ville(ville)
+                if centre:
+                    lat, lon = centre
+            if lat is None:
+                continue
+
+            stores.append({
+                "nom": nom, "code": code, "ville": ville, "adresse": adresse,
+                "tel": tel, "layer": layer, "lat": lat, "lon": lon,
+            })
+    return stores
+
+
+def _dist_m(lat1, lon1, lat2, lon2):
+    """Distance approximative en mètres (équirectangulaire — suffisant à ces échelles)."""
+    import math
+    dlat = (lat2 - lat1) * 111_320
+    dlon = (lon2 - lon1) * 111_320 * math.cos(math.radians((lat1 + lat2) / 2))
+    return (dlat ** 2 + dlon ** 2) ** 0.5
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def build_map_points():
+    """Agrège visites + démarchages par magasin (nom + ville).
+
+    Renvoie (points, nb_approx, nb_sans_position) :
+    - points : liste de dicts {magasin, ville, enseigne, type, lat, lon, approx, n, hist}
+      · type "client" (au moins une visite) ou "prospect" (démarchage uniquement)
+      · hist : 3 derniers passages, du plus récent au plus ancien
+    - nb_approx : magasins placés au centre de leur ville (pas de GPS enregistré)
+    - nb_sans_position : magasins impossibles à placer
+    """
+    stores = {}
+    for kind, loader in (("visite", load_visits), ("prospect", load_prospects)):
+        try:
+            df = loader()
+        except Exception:
+            continue
+        if df.empty or "Magasin" not in df.columns:
+            continue
+        try:
+            df = df.sort_values(by=["Date", "Heure"])  # chronologique : le plus récent écrase
+        except Exception:
+            pass
+        for _, r in df.iterrows():
+            mag = str(r.get("Magasin", "")).strip()
+            ville = str(r.get("Ville", "")).strip()
+            if not mag:
+                continue
+            key = (mag.lower(), ville.lower())
+            s = stores.setdefault(key, {
+                "magasin": mag, "ville": ville, "enseigne": "",
+                "type": "prospect", "lat": None, "lon": None,
+                "n": 0, "hist": [],
+            })
+            if kind == "visite":
+                s["type"] = "client"
+            s["n"] += 1
+            ens = str(r.get("Enseigne", "")).strip()
+            if ens:
+                s["enseigne"] = ens
+            lat, lon = _to_float(r.get("Latitude")), _to_float(r.get("Longitude"))
+            if lat is not None and lon is not None:
+                s["lat"], s["lon"] = lat, lon
+            detail = str(r.get("Etat", "") if kind == "visite" else r.get("Statut", "")).strip()
+            s["hist"].append({
+                "date": str(r.get("Date", "")).strip(),
+                "detail": detail,
+                "commercial": str(r.get("Commercial", "")).strip(),
+                "kind": kind,
+            })
+
+    points, nb_approx, nb_sans_position = [], 0, 0
+    for s in stores.values():
+        s["hist"] = list(reversed(s["hist"]))[:3]
+        s["approx"] = False
+        if s["lat"] is None:
+            centre = geocode_ville(s["ville"])
+            if centre:
+                s["lat"], s["lon"] = centre
+                s["approx"] = True
+                nb_approx += 1
+            else:
+                nb_sans_position += 1
+                continue
+        points.append(s)
+
+    # --- Réseau My Maps : magasins du réseau, visités ou non -----------------
+    try:
+        network = load_network_stores()
+    except Exception:
+        network = []
+    if network:
+        try:
+            enseignes_cfg = load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES))
+        except Exception:
+            enseignes_cfg = list(DEFAULT_ENSEIGNES)
+        for ns in network:
+            ens = detect_enseigne_from_name(f"{ns['layer']} {ns['nom']}", enseignes_cfg) or ""
+            match = None
+            for p in points:
+                if p["magasin"].strip().lower() == ns["nom"].strip().lower():
+                    match = p
+                    break
+                if not p["approx"] and _dist_m(p["lat"], p["lon"], ns["lat"], ns["lon"]) < 150:
+                    match = p
+                    break
+            if match is not None:
+                # Déjà visité/démarché : on enrichit la fiche et on recale le marqueur
+                # sur la position officielle du magasin (plus fiable que le GPS du commercial).
+                match["lat"], match["lon"], match["approx"] = ns["lat"], ns["lon"], False
+                match["code"], match["tel"] = ns["code"], ns["tel"]
+                match["adresse_reseau"] = ns["adresse"]
+                if ens and not match["enseigne"]:
+                    match["enseigne"] = ens
+            else:
+                points.append({
+                    "magasin": ns["nom"], "ville": ns["ville"], "enseigne": ens,
+                    "type": "reseau", "lat": ns["lat"], "lon": ns["lon"],
+                    "approx": False, "n": 0, "hist": [],
+                    "code": ns["code"], "tel": ns["tel"], "adresse_reseau": ns["adresse"],
+                })
+
+    return points, nb_approx, nb_sans_position
+
+
+# Gabarit HTML/JS de la carte (hors f-string : les accolades JS restent intactes).
+_MAP_HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin:0; padding:0; height:100%; font-family: 'Quicksand', -apple-system, sans-serif; }
+  #map { width:100%; height:100%; border-radius:16px; }
+  .iw { max-width:250px; font-family:'Quicksand', -apple-system, sans-serif; color:#2C2C2A; }
+  .iw h4 { margin:0 0 2px; font-size:15px; }
+  .iw .meta { font-size:12px; color:#6B6B6B; margin-bottom:6px; }
+  .iw .hist { font-size:12px; margin:2px 0; }
+  .iw .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:700; color:#fff; }
+  .iw button { margin-top:8px; width:100%; border:none; border-radius:10px; padding:8px 10px;
+               background:__PRIMARY__; color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+  .iw button:hover { background:__PRIMARY_DARK__; }
+  .iw .approx { font-size:11px; color:#B26A00; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+const DATA = __DATA__;
+const COLORS = { client: "__PRIMARY__", prospect: "__PURPLE__", reseau: "__BLUE__" };
+const BADGES = {
+  client:   '<span class="badge" style="background:__PRIMARY__;">💖 Client</span>',
+  prospect: '<span class="badge" style="background:__PURPLE__;">🔍 Prospect</span>',
+  reseau:   '<span class="badge" style="background:__BLUE__;">🏪 À visiter</span>',
+};
+let map, infoWin;
+
+function buildInfo(p, i) {
+  let histHtml = "";
+  p.hist.forEach(h => {
+    histHtml += '<div class="hist">📅 ' + h.date + ' · ' + h.detail +
+                (h.commercial ? ' · <i>' + h.commercial + '</i>' : '') + '</div>';
+  });
+  if (p.type === "reseau") histHtml = '<div class="hist" style="color:#6B6B6B;">Jamais visité pour l\'instant.</div>';
+  let fiche = "";
+  if (p.adresse) fiche += '<div class="hist">📍 ' + p.adresse + '</div>';
+  if (p.tel) fiche += '<div class="hist">📞 <a href="tel:' + p.tel + '">' + p.tel + '</a></div>';
+  if (p.code) fiche += '<div class="hist">🔖 Code magasin : ' + p.code + '</div>';
+  const btnLabel = p.type === "client" ? "➕ Nouvelle visite ici"
+                 : p.type === "prospect" ? "➕ Nouveau passage ici"
+                 : "➕ Première visite ici";
+  return '<div class="iw">' +
+    '<h4>' + p.magasin + '</h4>' +
+    '<div class="meta">' + (p.enseigne ? p.enseigne + ' · ' : '') + p.ville +
+    (p.n > 0 ? ' · ' + p.n + ' passage(s)' : '') + '</div>' +
+    BADGES[p.type] + fiche + histHtml +
+    (p.approx ? '<div class="approx">⚠️ Position approximative (centre-ville) — pas de GPS enregistré.</div>' : '') +
+    '<button onclick="selectStore(' + i + ')">' + btnLabel + '</button></div>';
+}
+
+function selectStore(i) {
+  const p = DATA[i];
+  const params = new URLSearchParams({
+    map_action: p.type === "prospect" ? "prospect" : "visite",
+    map_mag: p.magasin_raw,
+    map_ville: p.ville_raw,
+    map_ens: p.enseigne_raw || ""
+  });
+  // window.parent = la page Streamlit (même origine : l'iframe est en srcdoc)
+  window.parent.location.href = window.parent.location.pathname + "?" + params.toString();
+}
+
+function initMap() {
+  map = new google.maps.Map(document.getElementById("map"), {
+    mapTypeControl: false, streetViewControl: false,
+    fullscreenControl: true, gestureHandling: "greedy",
+  });
+  infoWin = new google.maps.InfoWindow();
+  const bounds = new google.maps.LatLngBounds();
+  DATA.forEach((p, i) => {
+    const pos = { lat: p.lat, lng: p.lon };
+    bounds.extend(pos);
+    const marker = new google.maps.Marker({
+      position: pos, map: map, title: p.magasin_raw,
+      icon: {
+        path: "M12 0C5.9 0 1 4.9 1 11c0 7.4 11 21 11 21s11-13.6 11-21C23 4.9 18.1 0 12 0z",
+        fillColor: COLORS[p.type], fillOpacity: p.approx ? 0.55 : 1,
+        strokeColor: "#fff", strokeWeight: 1.5, scale: 1.15,
+        anchor: new google.maps.Point(12, 32),
+        labelOrigin: new google.maps.Point(12, 11.5),
+      },
+      label: p.n > 0 ? { text: String(p.n), color: "#fff", fontSize: "11px", fontWeight: "700" } : null,
+    });
+    marker.addListener("click", () => {
+      infoWin.setContent(buildInfo(p, i));
+      infoWin.open({ map: map, anchor: marker });
+    });
+  });
+  if (DATA.length > 0) {
+    map.fitBounds(bounds, 48);
+    google.maps.event.addListenerOnce(map, "idle", () => {
+      if (map.getZoom() > 16) map.setZoom(16);
+    });
+  } else {
+    map.setCenter({ lat: 46.6, lng: 2.4 });
+    map.setZoom(6);
+  }
+}
+</script>
+<script async src="https://maps.googleapis.com/maps/api/js?key=__API_KEY__&callback=initMap&language=fr&region=FR"></script>
+</body>
+</html>
+"""
+
+
+def screen_map():
+    st.markdown(
+        '<div class="main-header">'
+        '<h1>🗺️ Carte des magasins</h1>'
+        '<p>Tes visites et démarchages, sur la carte — clique un magasin pour le sélectionner</p>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    if st.button("← Retour"):
+        st.session_state.screen = "home"
+        st.rerun()
+
+    api_key = get_gmaps_api_key()
+    if not api_key:
+        st.warning(
+            "🔑 Clé API Google Maps manquante. Ajoute `gmaps_api_key = \"...\"` dans les "
+            "secrets Streamlit Cloud (Settings → Secrets), puis recharge la page."
+        )
+        return
+
+    with st.spinner("Chargement des magasins…"):
+        points, nb_approx, nb_sans_position = build_map_points()
+
+    # Filtres
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        show_clients = st.checkbox("💖 Clients", value=True)
+    with col_f2:
+        show_prospects = st.checkbox("🔍 Prospects", value=True)
+    with col_f3:
+        show_reseau = st.checkbox("🏪 À visiter", value=True)
+
+    visible_types = set()
+    if show_clients:
+        visible_types.add("client")
+    if show_prospects:
+        visible_types.add("prospect")
+    if show_reseau:
+        visible_types.add("reseau")
+    shown = [p for p in points if p["type"] in visible_types]
+
+    nb_clients = sum(1 for p in shown if p["type"] == "client")
+    nb_prospects = sum(1 for p in shown if p["type"] == "prospect")
+    nb_reseau = sum(1 for p in shown if p["type"] == "reseau")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f'<div class="stat-card pink"><div class="stat-number">{nb_clients}</div><div class="stat-label">Clients</div></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="stat-card purple"><div class="stat-number">{nb_prospects}</div><div class="stat-label">Prospects</div></div>', unsafe_allow_html=True)
+    with col3:
+        st.markdown(f'<div class="stat-card blue"><div class="stat-number">{nb_reseau}</div><div class="stat-label">À visiter</div></div>', unsafe_allow_html=True)
+
+    if not shown:
+        st.info("Aucun magasin à afficher — enregistre une visite ou un démarchage d'abord ! 💪")
+        return
+
+    # Données injectées dans la carte : version échappée pour l'HTML de l'InfoWindow,
+    # version brute (_raw) pour le pré-remplissage du formulaire.
+    js_points = []
+    for p in shown:
+        js_points.append({
+            "magasin": html.escape(p["magasin"]), "magasin_raw": p["magasin"],
+            "ville": html.escape(p["ville"]), "ville_raw": p["ville"],
+            "enseigne": html.escape(p["enseigne"]), "enseigne_raw": p["enseigne"],
+            "type": p["type"], "lat": p["lat"], "lon": p["lon"],
+            "approx": p["approx"], "n": p["n"],
+            "adresse": html.escape(p.get("adresse_reseau", "")),
+            "tel": html.escape(p.get("tel", "")),
+            "code": html.escape(p.get("code", "")),
+            "hist": [{
+                "date": html.escape(h["date"]),
+                "detail": html.escape(h["detail"]),
+                "commercial": html.escape(h["commercial"]),
+            } for h in p["hist"]],
+        })
+
+    map_html = (_MAP_HTML_TEMPLATE
+                .replace("__DATA__", json.dumps(js_points, ensure_ascii=False))
+                .replace("__API_KEY__", api_key)
+                .replace("__PRIMARY_DARK__", PRIMARY_DARK)
+                .replace("__PRIMARY__", PRIMARY)
+                .replace("__PURPLE__", ACCENT_PURPLE)
+                .replace("__BLUE__", ACCENT_BLUE))
+    components.html(map_html, height=520)
+
+    notes = []
+    if nb_approx:
+        notes.append(f"{nb_approx} magasin(s) sans GPS placé(s) au centre de leur ville (marqueur pâle)")
+    if nb_sans_position:
+        notes.append(f"{nb_sans_position} magasin(s) impossibles à placer (ni GPS ni ville reconnue)")
+    if notes:
+        st.caption("ℹ️ " + " · ".join(notes) + ".")
+    if nb_reseau == 0 and show_reseau:
+        st.caption("⚠️ Aucun magasin « à visiter » : soit tout le réseau a déjà été visité, "
+                   "soit la carte My Maps est momentanément inaccessible (elle doit rester "
+                   "partagée « accessible via le lien »).")
+    st.caption("🏪 Réseau synchronisé depuis ta carte My Maps « Carte FIELD MERCI HANDY » "
+               "(rafraîchi toutes les heures). 💡 Clique un marqueur pour voir l'historique "
+               "et démarrer une visite pré-remplie.")
 
 
 def screen_admin_login():
@@ -2639,6 +3132,24 @@ else:
     if "screen" not in st.session_state:
         st.session_state.screen = "home"
 
+    # Sélection d'un magasin depuis la carte : l'InfoWindow Google Maps recharge
+    # l'app avec ?map_mag=… (l'iframe ne peut pas écrire dans session_state).
+    # On transforme ces paramètres en pré-remplissage puis on nettoie l'URL.
+    _qp = st.query_params
+    if "map_mag" in _qp:
+        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                  "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                  "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box",
+                  "map_prefill"]:
+            st.session_state.pop(k, None)
+        st.session_state.map_prefill = {
+            "magasin": _qp.get("map_mag", ""),
+            "ville": _qp.get("map_ville", ""),
+            "enseigne": _qp.get("map_ens", ""),
+        }
+        st.session_state.screen = "new_prospect" if _qp.get("map_action") == "prospect" else "new_visit"
+        st.query_params.clear()
+
     screen = st.session_state.screen
 
     if screen == "home":
@@ -2649,6 +3160,8 @@ else:
         screen_prospect_home()
     elif screen == "new_prospect":
         screen_new_prospect()
+    elif screen == "map":
+        screen_map()
     elif screen == "history":
         screen_history()
     elif screen == "dashboard":
