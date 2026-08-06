@@ -2370,7 +2370,7 @@ function buildInfo(p, i) {
     histHtml += '<div class="hist">📅 ' + h.date + ' · ' + h.detail +
                 (h.commercial ? ' · <i>' + h.commercial + '</i>' : '') + '</div>';
   });
-  if (p.type === "reseau") histHtml = '<div class="hist" style="color:#6B6B6B;">Jamais visité pour l\'instant.</div>';
+  if (p.type === "reseau") histHtml = '<div class="hist" style="color:#6B6B6B;">Jamais visité pour le moment.</div>';
   let fiche = "";
   if (p.adresse) fiche += '<div class="hist">📍 ' + p.adresse + '</div>';
   if (p.tel) fiche += '<div class="hist">📞 <a href="tel:' + p.tel + '">' + p.tel + '</a></div>';
