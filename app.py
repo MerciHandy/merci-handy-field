@@ -2606,21 +2606,28 @@ function buildInfo(p, i) {
     '<button onclick="selectStore(' + i + ')">' + btnLabel + '</button></div>';
 }
 
+// L'iframe des composants Streamlit est sandboxée SANS allow-top-navigation :
+// impossible de naviguer la page parente (SecurityError). Le sandbox autorise en
+// revanche les popups → on ouvre l'app dans un onglet, avec les paramètres.
+// L'origine de l'iframe est celle de l'app, donc window.location.origin suffit.
+function goApp(params) {
+  const url = window.location.origin + "/?" + params.toString();
+  const w = window.open(url, "_blank");
+  if (!w) setStatus("⚠️ Ton navigateur a bloqué l'ouverture — autorise les popups pour ce site.");
+}
+
 function selectStore(i) {
   const p = DATA[i];
-  const params = new URLSearchParams({
+  goApp(new URLSearchParams({
     map_action: p.type === "prospect" ? "prospect" : "visite",
     map_mag: p.magasin_raw,
     map_ville: p.ville_raw,
     map_ens: p.enseigne_raw || ""
-  });
-  // window.parent = la page Streamlit (même origine : l'iframe est en srcdoc)
-  window.parent.location.href = window.parent.location.pathname + "?" + params.toString();
+  }));
 }
 
 function openVisit(id, kind) {
-  const params = new URLSearchParams({ visit_id: id, visit_kind: kind });
-  window.parent.location.href = window.parent.location.pathname + "?" + params.toString();
+  goApp(new URLSearchParams({ visit_id: id, visit_kind: kind }));
 }
 
 // Les lignes d'historique des InfoWindows sont créées dynamiquement :
