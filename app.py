@@ -5,7 +5,7 @@ Géolocalisation GPS + détection magasin via OpenStreetMap (100% gratuit)
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 import re
 import time
 import html
+import hashlib
 import unicodedata
 from PIL import Image, ImageOps
 from streamlit_geolocation import streamlit_geolocation
@@ -1273,6 +1274,10 @@ def screen_home():
         unsafe_allow_html=True
     )
 
+    # --- Store Explorer : retrouver n'importe quel magasin et son historique --
+    render_store_explorer("home")
+    st.write("")
+
     col1, col2, col3 = st.columns(3)
     today = datetime.now().strftime("%Y-%m-%d")
     visits_today = len(df_user[df_user["Date"] == today]) if not df_user.empty else 0
@@ -1311,6 +1316,10 @@ def screen_home():
 
     if st.button("🗺️  Carte des magasins", use_container_width=True):
         st.session_state.screen = "map"
+        st.rerun()
+
+    if st.button("🧭  Tournées recommandées", use_container_width=True):
+        st.session_state.screen = "tournees"
         st.rerun()
 
     st.write("")
@@ -2409,7 +2418,8 @@ def build_map_points():
 
     points, nb_approx, nb_sans_position = [], 0, 0
     for s in stores.values():
-        s["hist"] = list(reversed(s["hist"]))[:3]
+        s["hist_all"] = list(reversed(s["hist"]))
+        s["hist"] = s["hist_all"][:3]
         s["approx"] = False
         if s["lat"] is None:
             centre = geocode_ville(s["ville"])
@@ -2511,7 +2521,7 @@ def build_map_points():
                 points.append({
                     "magasin": ns["nom"], "ville": ns["ville"], "enseigne": ens,
                     "type": "reseau", "lat": ns["lat"], "lon": ns["lon"],
-                    "approx": bool(ns.get("approx")), "n": 0, "hist": [],
+                    "approx": bool(ns.get("approx")), "n": 0, "hist": [], "hist_all": [],
                     "code": ns["code"], "tel": ns["tel"], "adresse_reseau": ns["adresse"],
                 })
 
@@ -2981,7 +2991,7 @@ def screen_admin():
 
     st.write("")
 
-    tab0, tab1, tab_pros, tab2, tab3, tab4, tab5 = st.tabs(["📊 Analyses", "📋 Visites", "🔍 Démarchage", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
+    tab0, tab1, tab_pros, tab_imp, tab2, tab3, tab4, tab5 = st.tabs(["📊 Analyses", "📋 Visites", "🔍 Démarchage", "📥 Import", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
 
     with tab0:
         manage_analytics()
@@ -2989,6 +2999,8 @@ def screen_admin():
         manage_visits()
     with tab_pros:
         manage_prospects()
+    with tab_imp:
+        manage_import()
     with tab2:
         manage_list("Enseignes", DEFAULT_ENSEIGNES)
     with tab3:
@@ -3579,6 +3591,1119 @@ def manage_list(name, defaults, with_emoji_hint=False):
                 st.warning("Saisis une valeur.")
 
 
+
+
+# =========================================================================
+# STORE EXPLORER — recherche magasin + historique complet
+# =========================================================================
+# Un seul champ sur l'accueil : enseigne, nom, adresse, ville, code postal ou
+# département. On tape dans l'index des magasins (visites + démarchages +
+# réseau My Maps) et on ouvre la fiche avec TOUT l'historique du magasin.
+
+DEPT_NAMES = {
+    "75": "Paris", "77": "Seine-et-Marne", "78": "Yvelines", "91": "Essonne",
+    "92": "Hauts-de-Seine", "93": "Seine-Saint-Denis", "94": "Val-de-Marne",
+    "95": "Val-d'Oise", "59": "Nord", "69": "Rhone", "13": "Bouches-du-Rhone",
+    "33": "Gironde", "31": "Haute-Garonne", "44": "Loire-Atlantique",
+    "67": "Bas-Rhin", "06": "Alpes-Maritimes", "34": "Herault",
+}
+
+IDF_DEPTS = ["75", "92", "93", "94", "77", "78", "91", "95"]
+
+STORE_TYPE_BADGE = {
+    "client": ("💖 Client", PRIMARY),
+    "prospect": ("🔍 Prospect", ACCENT_PURPLE),
+    "reseau": ("🏪 Jamais visité", ACCENT_BLUE),
+}
+
+
+def fr_date(d):
+    """« 2026-04-30 » → « 30/04/2026 » (les dates de la Sheet sont en ISO)."""
+    s = str(d or "").strip()
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)
+    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else s
+
+
+def _cp_from_any(*values):
+    """Premier code postal à 5 chiffres trouvé dans les valeurs données."""
+    for v in values:
+        m = re.search(r"\b(\d{5})\b", str(v or ""))
+        if m:
+            return m.group(1)
+    return ""
+
+
+def store_key(s):
+    """Identifiant stable d'un magasin : nom + ville (comme build_map_points)."""
+    return f"{str(s.get('magasin', '')).strip()}||{str(s.get('ville', '')).strip()}"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def store_index():
+    """Index de recherche de TOUS les magasins connus.
+
+    Repart de build_map_points() (visites + démarchages + réseau My Maps) et
+    ajoute par magasin : code postal, département, date du dernier passage et
+    un champ `hay` normalisé (minuscules sans accents) où tape la recherche.
+    """
+    try:
+        points, _, _ = build_map_points()
+    except Exception:
+        return []
+
+    idx = []
+    for p in points:
+        cp = _cp_of(p.get("ville", "")) or _cp_from_any(p.get("adresse_reseau", ""), p.get("ville", ""))
+        dept = cp[:2] if cp else ""
+        hay = " ".join([
+            str(p.get("magasin", "")), str(p.get("enseigne", "")), str(p.get("ville", "")),
+            str(p.get("adresse_reseau", "")), str(p.get("code", "")), cp, DEPT_NAMES.get(dept, ""),
+        ])
+        rec = dict(p)
+        rec["cp"] = cp
+        rec["dept"] = dept
+        rec["hay"] = _norm_txt(hay)
+        rec["derniere_visite"] = ""
+        rec["dernier_passage"] = ""
+        for h in (p.get("hist_all") or []):
+            if not h.get("date"):
+                continue
+            if not rec["dernier_passage"]:
+                rec["dernier_passage"] = h["date"]
+            if h.get("kind") == "visite" and not rec["derniere_visite"]:
+                rec["derniere_visite"] = h["date"]
+        idx.append(rec)
+    return idx
+
+
+def search_stores(query, limit=25):
+    """Recherche libre : enseigne, nom, adresse, ville, code postal, département.
+
+    Chaque mot saisi doit être retrouvé (ET, pas OU) — « monoprix 75011 » ne
+    renvoie que les Monoprix du 11e. Un mot de 2 chiffres est compris comme un
+    département, un mot de 5 chiffres comme un code postal.
+    """
+    idx = store_index()
+    q = _norm_txt(query).strip()
+    if not q or not idx:
+        return []
+    tokens = [t for t in re.split(r"[\s,;/]+", q) if t]
+    if not tokens:
+        return []
+
+    out = []
+    for s in idx:
+        for t in tokens:
+            if re.fullmatch(r"\d{2}", t):
+                if s["dept"] != t and t not in s["hay"]:
+                    break
+            elif t not in s["hay"]:
+                break
+        else:
+            out.append(s)
+
+    first = tokens[0]
+    type_rank = {"client": 0, "prospect": 1, "reseau": 2}
+    out.sort(key=lambda s: (
+        0 if _norm_txt(s.get("magasin", "")).startswith(first) else 1,
+        type_rank.get(s.get("type"), 3),
+        -int(s.get("n") or 0),
+        _norm_txt(s.get("magasin", "")),
+    ))
+    return out[:limit]
+
+
+def open_store(s, back=None):
+    """Ouvre la fiche magasin (mémorise l'écran d'où l'on vient)."""
+    st.session_state.store_detail = store_key(s) if isinstance(s, dict) else str(s)
+    st.session_state.store_back = back or st.session_state.get("screen", "home")
+    st.session_state.screen = "store_detail"
+
+
+def render_store_card(s):
+    """Carte magasin des résultats de recherche."""
+    label, color = STORE_TYPE_BADGE.get(s.get("type"), ("🏪", ACCENT_BLUE))
+    lieu = " · ".join([x for x in [str(s.get("ville", "")), str(s.get("adresse_reseau", ""))] if x])
+    n = int(s.get("n") or 0)
+    last = s.get("derniere_visite") or s.get("dernier_passage") or ""
+    if last:
+        info = f"📅 Dernier passage {fr_date(last)} · {n} passage" + ("s" if n > 1 else "")
+    elif n:
+        info = f"{n} passage" + ("s" if n > 1 else "")
+    else:
+        info = "Aucun passage enregistré"
+    st.markdown(
+        f'<div class="visit-card">'
+        f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">'
+        f'<div style="flex:1;">'
+        f'{logo_img(s.get("enseigne", ""), height=18)}'
+        f'<strong style="font-size:15px;">{html.escape(str(s.get("magasin", "")))}</strong> · '
+        f'<span style="color:{PRIMARY};font-weight:600;">{html.escape(str(s.get("enseigne", "")))}</span><br>'
+        f'<span style="font-size:12px;color:{TEXT_SOFT};">📍 {html.escape(lieu)}</span><br>'
+        f'<span style="font-size:12px;color:{TEXT_SOFT};">{html.escape(info)}</span>'
+        f'</div>'
+        f'<div style="font-size:11px;font-weight:700;color:{color};white-space:nowrap;">{label}</div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_store_explorer(key_prefix="home", max_cards=10):
+    """Champ de recherche magasin + résultats cliquables (utilisé sur l'accueil)."""
+    q = st.text_input(
+        "Rechercher un magasin",
+        key=f"{key_prefix}_store_q",
+        placeholder="🔎 Monoprix Oberkampf · Nocibé 93 · rue de Rivoli · Créteil…",
+        label_visibility="collapsed",
+    )
+    if not str(q or "").strip():
+        st.caption(
+            "🔎 Tape une enseigne, un nom de magasin, une adresse, une ville, un code "
+            "postal ou un département — tu récupères la fiche et tout l'historique des visites."
+        )
+        return
+
+    with st.spinner("Recherche…"):
+        results = search_stores(q, limit=60)
+
+    if not results:
+        st.info("Aucun magasin trouvé. Essaie avec moins de mots (ex. « monoprix 75011 »).")
+        return
+
+    st.caption(f"**{len(results)}** magasin(s) trouvé(s)")
+    for i, s in enumerate(results[:max_cards]):
+        render_store_card(s)
+        if st.button("Ouvrir la fiche →", key=f"{key_prefix}_open_{i}", use_container_width=True):
+            open_store(s)
+            st.rerun()
+    if len(results) > max_cards:
+        st.caption(f"… et {len(results) - max_cards} autres résultats. Affine ta recherche pour les afficher.")
+
+
+def store_passages(magasin, ville):
+    """Tous les passages d'un magasin : visites + démarchages, du + récent au + ancien.
+
+    Renvoie une liste de (kind, row) — `kind` vaut « visite » ou « prospect ».
+    """
+    rows = []
+    for kind, loader in (("visite", load_visits), ("prospect", load_prospects)):
+        try:
+            df = loader()
+        except Exception:
+            continue
+        if df.empty or "Magasin" not in df.columns:
+            continue
+        mask = df["Magasin"].astype(str).str.strip().str.lower() == str(magasin).strip().lower()
+        if "Ville" in df.columns and str(ville or "").strip():
+            mask = mask & (df["Ville"].astype(str).str.strip().str.lower() == str(ville).strip().lower())
+        for _, r in df[mask].iterrows():
+            rows.append((kind, r))
+    rows.sort(key=lambda x: (str(x[1].get("Date", "")), str(x[1].get("Heure", ""))), reverse=True)
+    return rows
+
+
+def screen_store_detail():
+    """Fiche magasin : coordonnées + historique complet des passages."""
+    key = str(st.session_state.get("store_detail", ""))
+    magasin, _, ville = key.partition("||")
+    store = next((s for s in store_index() if store_key(s) == key), None)
+
+    enseigne = str(store.get("enseigne", "")) if store else ""
+    adresse = str(store.get("adresse_reseau", "")) if store else ""
+    tel = str(store.get("tel", "")) if store else ""
+    code = str(store.get("code", "")) if store else ""
+    lat = store.get("lat") if store else None
+    lon = store.get("lon") if store else None
+    badge, badge_color = STORE_TYPE_BADGE.get(
+        (store or {}).get("type"), ("🏪", ACCENT_BLUE)
+    )
+
+    st.markdown(
+        f'<div class="main-header">'
+        f'<h1>🏪 {html.escape(magasin or "Magasin")}</h1>'
+        f'<p>{html.escape(" · ".join([x for x in [enseigne, ville] if x]))}</p>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    back = st.session_state.get("store_back", "home")
+    labels = {"home": "← Retour à l'accueil", "map": "← Retour à la carte", "tournees": "← Retour aux tournées"}
+    if st.button(labels.get(back, "← Retour")):
+        st.session_state.screen = back
+        st.rerun()
+
+    lignes = [f'<span style="font-size:12px;font-weight:700;color:{badge_color};">{badge}</span>']
+    if adresse:
+        lignes.append(f'<span style="font-size:13px;">📍 {html.escape(adresse)}</span>')
+    elif ville:
+        lignes.append(f'<span style="font-size:13px;">📍 {html.escape(ville)}</span>')
+    if tel:
+        lignes.append(f'<span style="font-size:13px;">📞 <a href="tel:{html.escape(tel)}">{html.escape(tel)}</a></span>')
+    if code:
+        lignes.append(f'<span style="font-size:12px;color:{TEXT_SOFT};">🔖 Code magasin {html.escape(code)}</span>')
+    if lat is not None and lon is not None:
+        itin = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=transit"
+        lignes.append(f'<span style="font-size:13px;">🧭 <a href="{itin}" target="_blank">Itinéraire</a></span>')
+    st.markdown(
+        '<div class="visit-card">'
+        + f'{logo_img(enseigne, height=24)}<strong style="font-size:17px;">{html.escape(magasin)}</strong><br>'
+        + "<br>".join(lignes)
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("➕ Nouvelle visite ici", use_container_width=True, type="primary"):
+            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                      "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
+                      "visit_ens_pick"]:
+                st.session_state.pop(k, None)
+            st.session_state.map_prefill = {"magasin": magasin, "ville": ville, "enseigne": enseigne}
+            st.session_state.screen = "new_visit"
+            st.rerun()
+    with col_b:
+        if st.button("🔍 Passage démarchage", use_container_width=True):
+            for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
+                      "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo",
+                      "prospect_ville_box", "prospect_ens_pick"]:
+                st.session_state.pop(k, None)
+            st.session_state.map_prefill = {"magasin": magasin, "ville": ville, "enseigne": enseigne}
+            st.session_state.screen = "new_prospect"
+            st.rerun()
+
+    st.write("")
+    passages = store_passages(magasin, ville)
+    st.markdown(
+        f'<div class="section-title">📜 Historique — {len(passages)} passage'
+        + ("s" if len(passages) > 1 else "")
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not passages:
+        st.info("Aucun passage enregistré dans ce magasin. C'est peut-être l'occasion ! 💪")
+        return
+
+    for kind, row in passages:
+        is_visit = kind == "visite"
+        detail = str(row.get("Etat", "") if is_visit else row.get("Statut", "")).strip()
+        texte = str(row.get("Commentaire", "") if is_visit else row.get("Notes", "")).strip()
+        projet = str(row.get("Projet", "")).strip() if is_visit else ""
+        heure = str(row.get("Heure", "")).strip()
+        titre = f'{"📝" if is_visit else "🔍"} {fr_date(row.get("Date", ""))}'
+        if heure:
+            titre += f" · {heure}"
+        titre += f' · {str(row.get("Commercial", "")).strip() or "?"}'
+
+        lignes = []
+        if projet:
+            lignes.append(f'<span style="font-size:13px;">🚀 {html.escape(projet)}</span>')
+        if detail:
+            couleurs = " ".join(
+                f'<span style="background:{etat_color(e)};color:#fff;border-radius:10px;'
+                f'padding:2px 8px;font-size:11px;font-weight:600;margin-right:4px;">{html.escape(e)}</span>'
+                for e in split_etats(detail)
+            ) if is_visit else f'<span style="font-size:13px;">{html.escape(detail)}</span>'
+            lignes.append(couleurs)
+        if texte:
+            lignes.append(f'<span style="font-size:14px;">💬 {html.escape(texte)}</span>')
+        thumbs = render_thumbnails(row.get("Photos_URLs", ""), size=120, max_thumbs=4)
+
+        st.markdown(
+            f'<div class="visit-card">'
+            f'<strong style="font-size:14px;">{html.escape(titre)}</strong><br>'
+            + ("<br>".join(lignes) if lignes else '<span style="font-size:13px;color:#6B6B6B;">Pas de commentaire</span>')
+            + thumbs
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# =========================================================================
+# TOURNÉES TERRAIN — recommandations Île-de-France
+# =========================================================================
+# Objectif : dire aux équipes terrain OÙ aller et DANS QUEL ORDRE, 2 jours par
+# semaine, 10h-18h avec une heure de pause, 10 à 20 min par magasin.
+# Le plan est recalculé à chaque ouverture de l'écran à partir des visites
+# réellement enregistrées : un magasin visité sort automatiquement du plan.
+
+TOUR_JOURS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+TOUR_JOURS_DEFAUT = ["Jeudi", "Vendredi"]
+TOUR_COOLDOWN_J = 21      # un magasin vu il y a moins de 3 semaines n'est pas reproposé
+TOUR_CADENCE_J = 60       # rythme de repassage visé dans un magasin client
+TOUR_RAYON_M = 6000       # on ne saute pas d'un bout à l'autre de l'IDF dans la journée
+
+
+def _travel_minutes(dist_m):
+    """Temps de trajet estimé entre deux magasins, en minutes.
+
+    On compare la marche (~4,2 km/h + 2 min de marge) et les transports
+    (~27 km/h porte à porte, 8 min d'accès quai/stationnement) et on garde le
+    plus rapide. Volontairement prudent : mieux vaut une tournée un peu courte
+    qu'un planning intenable sur le terrain.
+    """
+    marche = 2 + dist_m / 70.0
+    transport = 8 + dist_m / 450.0
+    return max(3, int(round(min(marche, transport))))
+
+
+def _days_since(date_str, today):
+    """Nombre de jours depuis une date ISO ; None si la date est illisible."""
+    try:
+        d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+    return (today - d).days
+
+
+def _hhmm(minutes):
+    return f"{int(minutes) // 60:02d}:{int(minutes) % 60:02d}"
+
+
+def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, today=None):
+    """Magasins éligibles à une tournée, avec leur score de priorité.
+
+    Priorité = ancienneté du dernier passage rapportée à la cadence visée.
+    Un magasin jamais visité passe devant ; un magasin dont le dernier passage
+    signalait un souci (rupture, mauvais emplacement, prix…) remonte aussi.
+    Les magasins vus il y a moins de `cooldown` jours sont écartés.
+    """
+    today = today or datetime.now().date()
+    cands = []
+    for s in store_index():
+        if s.get("dept") not in depts:
+            continue
+        if s.get("lat") is None or s.get("lon") is None:
+            continue
+
+        last_v, last_etat, last_any = "", "", ""
+        for h in (s.get("hist_all") or []):
+            if not h.get("date"):
+                continue
+            if not last_any:
+                last_any = h["date"]
+            if h.get("kind") == "visite" and not last_v:
+                last_v, last_etat = h["date"], str(h.get("detail", ""))
+
+        depuis = _days_since(last_any, today)
+        if depuis is not None and depuis < cooldown:
+            continue
+
+        if not last_v:
+            # Jamais visité : c'est là qu'il y a le plus à gagner
+            score = 100.0 if s.get("type") == "reseau" else 92.0
+            motif = "Jamais visité"
+        else:
+            dv = _days_since(last_v, today) or 0
+            score = 40.0 + 45.0 * min(dv / max(cadence, 1), 2.0)
+            motif = f"Vu il y a {dv} j"
+            if last_etat and is_problem_etat(last_etat):
+                score += 25.0
+                motif += " · souci signalé"
+        if s.get("approx"):
+            score -= 12.0     # position approximative : itinéraire moins fiable
+
+        c = dict(s)
+        c["score"] = score
+        c["motif"] = motif
+        c["last_visit"] = last_v
+        cands.append(c)
+
+    cands.sort(key=lambda c: -c["score"])
+    return cands
+
+
+def build_day_route(cands, used, visit_min, start_min, end_min, lunch_min_start, lunch_len):
+    """Construit UNE journée de tournée.
+
+    On part du magasin le plus prioritaire encore libre, puis on enchaîne de
+    proche en proche : à chaque étape on choisit le magasin qui maximise
+    priorité / temps de trajet, tant qu'il reste du temps avant la fin de journée.
+    """
+    seed = next((c for c in cands if store_key(c) not in used), None)
+    if seed is None:
+        return []
+
+    route = []
+    current, travel = seed, 0
+    clock = start_min
+    lunch_done = False
+
+    while True:
+        arrive = clock + travel
+        if not lunch_done:
+            if arrive >= lunch_min_start + lunch_len:
+                lunch_done = True
+            elif arrive + visit_min > lunch_min_start:
+                arrive = lunch_min_start + lunch_len   # la visite mordrait sur la pause
+                lunch_done = True
+        if arrive + visit_min > end_min:
+            break
+
+        route.append({
+            "store": current,
+            "debut": arrive,
+            "fin": arrive + visit_min,
+            "trajet": travel,
+        })
+        used.add(store_key(current))
+        clock = arrive + visit_min
+
+        best, best_gain, best_travel = None, 0.0, 0
+        for c in cands:
+            if store_key(c) in used:
+                continue
+            d = _dist_m(current["lat"], current["lon"], c["lat"], c["lon"])
+            if d > TOUR_RAYON_M:
+                continue
+            t = _travel_minutes(d)
+            gain = c["score"] / (1.0 + t / 6.0)   # 6 min de trajet ≈ moitié de l'intérêt
+            if gain > best_gain:
+                best, best_gain, best_travel = c, gain, t
+        if best is None:
+            break
+        current, travel = best, best_travel
+
+    return route
+
+
+def next_dates(jours, count, today=None):
+    """Prochaines dates correspondant aux jours de semaine retenus."""
+    today = today or datetime.now().date()
+    wanted = {TOUR_JOURS.index(j) for j in jours if j in TOUR_JOURS}
+    if not wanted:
+        return []
+    out, d, guard = [], today + timedelta(days=1), 0
+    while len(out) < count and guard < 200:
+        if d.weekday() in wanted:
+            out.append(d)
+        d += timedelta(days=1)
+        guard += 1
+    return out
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def build_tour_plan(depts_t, jours_t, visit_min, nb_semaines,
+                    start_min, end_min, lunch_min_start, lunch_len,
+                    cadence, cooldown, stamp):
+    """Plan complet : `nb_semaines` semaines × les jours choisis.
+
+    `stamp` (nombre de visites enregistrées) fait partie de la clé de cache :
+    dès qu'une visite est saisie, le plan est recalculé automatiquement.
+    """
+    cands = tour_candidates(list(depts_t), cadence=cadence, cooldown=cooldown)
+    if not cands:
+        return [], 0
+
+    used = set()
+    dates = next_dates(list(jours_t), nb_semaines * max(len(jours_t), 1))
+    days = []
+    for d in dates:
+        route = build_day_route(cands, used, visit_min, start_min, end_min,
+                                lunch_min_start, lunch_len)
+        if not route:
+            break
+        days.append({"date": d.isoformat(), "stops": route})
+    return days, len(cands)
+
+
+def _maps_route_url(stops):
+    """Lien Google Maps de l'itinéraire du jour (10 points max côté Google)."""
+    pts = [s["store"] for s in stops if s["store"].get("lat") is not None][:10]
+    if len(pts) < 2:
+        if not pts:
+            return ""
+        return f"https://www.google.com/maps/dir/?api=1&destination={pts[0]['lat']},{pts[0]['lon']}&travelmode=transit"
+    origin = f"{pts[0]['lat']},{pts[0]['lon']}"
+    dest = f"{pts[-1]['lat']},{pts[-1]['lon']}"
+    way = "|".join(f"{p['lat']},{p['lon']}" for p in pts[1:-1])
+    url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={dest}&travelmode=transit"
+    if way:
+        url += f"&waypoints={way}"
+    return url
+
+
+JOURS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+MOIS_LONG_FR = ["janvier", "février", "mars", "avril", "mai", "juin",
+                "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+
+
+def _date_longue(iso):
+    try:
+        d = datetime.strptime(str(iso)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return str(iso)
+    return f"{JOURS_FR[d.weekday()]} {d.day} {MOIS_LONG_FR[d.month - 1]}"
+
+
+def screen_tournees():
+    """Écran des tournées recommandées."""
+    st.markdown(
+        '<div class="main-header">'
+        '<h1>🧭 Tournées recommandées</h1>'
+        '<p>Où aller cette semaine en Île-de-France — mis à jour à chaque visite saisie</p>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    if st.button("← Retour à l'accueil"):
+        st.session_state.screen = "home"
+        st.rerun()
+
+    with st.expander("⚙️ Réglages de la tournée", expanded=False):
+        jours = st.multiselect(
+            "Jours de terrain (2 par semaine recommandés)",
+            TOUR_JOURS, default=TOUR_JOURS_DEFAUT,
+            key="tour_jours",
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            visit_min = st.slider("Durée d'une visite (min)", 10, 20,
+                                  15, key="tour_visit_min")
+            h_debut = st.number_input("Début de journée (h)", 7, 12,
+                                      10, key="tour_h_debut")
+        with col2:
+            nb_semaines = st.slider("Semaines à planifier", 1, 4,
+                                    2, key="tour_semaines")
+            h_fin = st.number_input("Fin de journée (h)", 14, 21,
+                                    18, key="tour_h_fin")
+        col3, col4 = st.columns(2)
+        with col3:
+            h_pause = st.number_input("Début de la pause déjeuner (h)", 11, 15,
+                                      13, key="tour_h_pause")
+        with col4:
+            duree_pause = st.slider("Durée de la pause (min)", 30, 90,
+                                    60, step=15, key="tour_pause_min")
+        depts = st.multiselect(
+            "Départements",
+            IDF_DEPTS,
+            default=IDF_DEPTS,
+            format_func=lambda d: f"{d} · {DEPT_NAMES.get(d, '')}",
+            key="tour_depts",
+        )
+        col5, col6 = st.columns(2)
+        with col5:
+            cadence = st.slider("Repasser dans un magasin tous les… (jours)", 30, 120,
+                                TOUR_CADENCE_J, step=15, key="tour_cadence")
+        with col6:
+            cooldown = st.slider("Ne pas reproposer avant… (jours)", 7, 60,
+                                 TOUR_COOLDOWN_J, step=7, key="tour_cooldown")
+
+    if not jours:
+        st.warning("Choisis au moins un jour de terrain dans les réglages.")
+        return
+    if not depts:
+        st.warning("Choisis au moins un département dans les réglages.")
+        return
+
+    if st.button("🔄 Recalculer maintenant", use_container_width=True):
+        build_tour_plan.clear()
+        store_index.clear()
+        st.rerun()
+
+    try:
+        stamp = len(load_visits())
+    except Exception:
+        stamp = 0
+
+    with st.spinner("Construction des tournées…"):
+        days, nb_cands = build_tour_plan(
+            tuple(sorted(depts)), tuple(jours), int(visit_min), int(nb_semaines),
+            int(h_debut) * 60, int(h_fin) * 60, int(h_pause) * 60, int(duree_pause),
+            int(cadence), int(cooldown), stamp,
+        )
+
+    if not days:
+        st.info(
+            "Aucune tournée à proposer : tous les magasins des départements choisis ont "
+            "été vus récemment. Baisse le délai « ne pas reproposer avant » dans les réglages."
+        )
+        return
+
+    total_stops = sum(len(d["stops"]) for d in days)
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.markdown(f'<div class="stat-card pink"><div class="stat-number">{len(days)}</div><div class="stat-label">Journées</div></div>', unsafe_allow_html=True)
+    with col_b:
+        st.markdown(f'<div class="stat-card yellow"><div class="stat-number">{total_stops}</div><div class="stat-label">Magasins</div></div>', unsafe_allow_html=True)
+    with col_c:
+        st.markdown(f'<div class="stat-card mint"><div class="stat-number">{nb_cands}</div><div class="stat-label">À voir en tout</div></div>', unsafe_allow_html=True)
+
+    st.caption(
+        f"Priorité aux magasins jamais visités, puis à ceux vus il y a plus de {cadence} jours "
+        f"ou dont le dernier passage signalait un souci. Une visite saisie fait disparaître "
+        f"le magasin des tournées suivantes."
+    )
+    st.write("")
+
+    for di, day in enumerate(days):
+        stops = day["stops"]
+        fin = _hhmm(stops[-1]["fin"]) if stops else ""
+        villes = []
+        for s in stops:
+            v = _city_of(s["store"].get("ville", "")) or s["store"].get("ville", "")
+            if v and v not in villes:
+                villes.append(v)
+        titre = f'📅 {_date_longue(day["date"]).capitalize()} — {len(stops)} magasins (jusqu\'à {fin})'
+        with st.expander(titre, expanded=(di == 0)):
+            zone = ", ".join(villes[:4]) + ("…" if len(villes) > 4 else "")
+            url = _maps_route_url(stops)
+            entete = f'<span style="font-size:12px;color:{TEXT_SOFT};">📍 {html.escape(zone)}</span>'
+            if url:
+                entete += f' · <a href="{url}" target="_blank" style="font-size:12px;">🧭 Itinéraire Google Maps</a>'
+            st.markdown(entete, unsafe_allow_html=True)
+            st.write("")
+
+            pause_affichee = False
+            for si, stop in enumerate(stops):
+                s = stop["store"]
+                if not pause_affichee and stop["debut"] >= int(h_pause) * 60:
+                    st.markdown(
+                        f'<div style="text-align:center;color:{TEXT_SOFT};font-size:12px;'
+                        f'margin:6px 0;">🍽️ Pause déjeuner {_hhmm(int(h_pause) * 60)} – '
+                        f'{_hhmm(int(h_pause) * 60 + int(duree_pause))}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    pause_affichee = True
+
+                lieu = s.get("adresse_reseau", "") or s.get("ville", "")
+                trajet = f'🚶 {stop["trajet"]} min de trajet · ' if stop["trajet"] else ""
+                st.markdown(
+                    f'<div class="visit-card" style="padding:12px 14px;">'
+                    f'<div style="display:flex;gap:10px;align-items:flex-start;">'
+                    f'<div style="font-weight:800;color:{PRIMARY};font-size:15px;min-width:52px;">'
+                    f'{_hhmm(stop["debut"])}</div>'
+                    f'<div style="flex:1;">'
+                    f'{logo_img(s.get("enseigne", ""), height=16)}'
+                    f'<strong style="font-size:14px;">{html.escape(str(s.get("magasin", "")))}</strong><br>'
+                    f'<span style="font-size:12px;color:{TEXT_SOFT};">📍 {html.escape(str(lieu))}</span><br>'
+                    f'<span style="font-size:11px;color:{TEXT_SOFT};">{trajet}⭐ {html.escape(str(s.get("motif", "")))}</span>'
+                    f'</div></div></div>',
+                    unsafe_allow_html=True,
+                )
+                col_f, col_v = st.columns(2)
+                with col_f:
+                    if st.button("Fiche", key=f"tour_f_{di}_{si}", use_container_width=True):
+                        open_store(s, back="tournees")
+                        st.rerun()
+                with col_v:
+                    if st.button("➕ Visite", key=f"tour_v_{di}_{si}", use_container_width=True):
+                        for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops",
+                                  "geo_selected", "visit_ville_query", "visit_ville_pick",
+                                  "visit_ville_geo", "visit_ville_box", "visit_ens_pick"]:
+                            st.session_state.pop(k, None)
+                        st.session_state.map_prefill = {
+                            "magasin": s.get("magasin", ""),
+                            "ville": s.get("ville", ""),
+                            "enseigne": s.get("enseigne", ""),
+                        }
+                        st.session_state.screen = "new_visit"
+                        st.rerun()
+
+
+# =========================================================================
+# IMPORT D'HISTORIQUE — reprise d'un fichier de suivi terrain
+# =========================================================================
+# Reprend un tableau « DATE / ENSEIGNE / ADRESSE + commentaires » (les suivis
+# terrain tenus à la main dans Google Sheets) et l'ajoute aux visites de l'app.
+# L'ID de chaque ligne est un hash de son contenu : réimporter deux fois le
+# même fichier ne crée jamais de doublon.
+
+IMPORT_SHEET_DEFAUT = "1leV1VibKexR49GnLbSNG8p_VNfrUjuA78pzCZ-ljUh8"
+IMPORT_TAB_DEFAUT = "SUIVI - Vinita"
+IMPORT_PROJET = "Import historique"
+
+# Colonnes libres du suivi → étiquette dans le commentaire de la visite.
+# Les noms sont comparés sans accents ni casse, donc les variantes passent.
+IMPORT_COMMENT_COLS = [
+    ("Assortiment et stock", "Assortiment"),
+    ("Assortiment & Stock (handcare, skincare, bodycare, lipcare)", "Assortiment"),
+    ("Emplacement", "Emplacement"),
+    ("Prix", "Prix"),
+    ("Concurrence", "Concurrence"),
+    ("Ventes", "Ventes"),
+    ("Autres commentaires", "Autres"),
+]
+
+
+def _clean_cell(v):
+    """Nettoie une cellule : retours ligne, &#13; des exports, espaces multiples."""
+    s = str(v or "").replace("&#13;", " ").replace("\r", " ").replace("\n", " ")
+    return " ".join(s.split()).strip()
+
+
+def _parse_date_import(v):
+    """Date du suivi (jj/mm/aaaa le plus souvent) → format ISO de l'app."""
+    s = _clean_cell(v)
+    if not s:
+        return ""
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except Exception:
+            continue
+    return ""
+
+
+def _norm_enseigne_import(raw, enseignes):
+    """Rapproche « NOCIBE », « Monop'Beauty », « Monoprix (Beauty) »… d'une
+    enseigne connue de l'app, pour que les logos et les filtres fonctionnent."""
+    r = _norm_txt(raw)
+    if not r:
+        return ""
+    if "monop" in r:
+        return next((e for e in enseignes if _norm_txt(e) == "monoprix"), "Monoprix")
+    for e in enseignes:
+        n = _norm_txt(e)
+        if n and n != "autre" and (n == r or n in r or r in n):
+            return e
+    return _clean_cell(raw).title()
+
+
+def _split_adresse_import(adresse):
+    """« 31 rue du Départ, 75014 Paris » → (voie, code postal, ville)."""
+    a = _clean_cell(adresse)
+    m = re.search(r"\b(\d{5})\b", a)
+    if not m:
+        return a, "", ""
+    voie = a[:m.start()].strip(" ,;-")
+    ville = a[m.end():].strip(" ,;-")
+    return voie, m.group(1), ville
+
+
+def geocode_import_batch(rows):
+    """Comme geocode_addresses_batch, mais renvoie AUSSI la commune et le CP
+    trouvés par la BAN — c'est ce qui remplit correctement la colonne Ville.
+
+    rows : tuple de (id, adresse, cp, ville) → {id: (lat, lon, ville, cp)}.
+    """
+    import csv as _csv
+    buf = io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["id", "adresse", "postcode", "city"])
+    for rid, adresse, cp, city in rows:
+        w.writerow([rid, adresse, cp, city])
+
+    out = {}
+    try:
+        resp = requests.post(
+            "https://api-adresse.data.gouv.fr/search/csv/",
+            files={"data": ("import.csv", buf.getvalue().encode("utf-8"), "text/csv")},
+            data={"columns": ["adresse", "city"], "postcode": "postcode"},
+            timeout=90,
+        )
+        if resp.status_code != 200:
+            return out
+        reader = _csv.DictReader(io.StringIO(resp.content.decode("utf-8")))
+        for r in reader:
+            try:
+                lat = float(r.get("latitude") or r.get("result_latitude") or "")
+                lon = float(r.get("longitude") or r.get("result_longitude") or "")
+                score = float(r.get("result_score") or 0)
+            except Exception:
+                continue
+            if score >= 0.3:
+                out[str(r.get("id", ""))] = (
+                    lat, lon,
+                    _clean_cell(r.get("result_city", "")),
+                    _clean_cell(r.get("result_postcode", "")),
+                )
+    except Exception:
+        return out
+    return out
+
+
+def prepare_import_rows(records, commercial, projet=IMPORT_PROJET):
+    """Transforme les lignes brutes d'un suivi terrain en visites au format app.
+
+    `records` : liste de dicts {nom de colonne: valeur}. Renvoie une liste de
+    dicts prêts pour SHEET_COLUMNS, avec un ID stable (hash du contenu).
+    """
+    try:
+        enseignes = load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES))
+    except Exception:
+        enseignes = list(DEFAULT_ENSEIGNES)
+
+    prepared = []
+    for rec in records:
+        raw = {_norm_txt(k): v for k, v in rec.items()}
+        date_iso = _parse_date_import(raw.get("date", ""))
+        enseigne_raw = _clean_cell(raw.get("enseignes", "") or raw.get("enseigne", ""))
+        adresse = _clean_cell(
+            raw.get("adresse", "") or raw.get("nom du magasin", "") or raw.get("magasin", "")
+        )
+        if not adresse and not enseigne_raw:
+            continue          # ligne vide / séparateur
+        if not date_iso:
+            continue          # sans date, la visite n'a pas d'ancrage dans l'historique
+
+        enseigne = _norm_enseigne_import(enseigne_raw, enseignes)
+        voie, cp, ville_txt = _split_adresse_import(adresse)
+
+        parts = []
+        for src, label in IMPORT_COMMENT_COLS:
+            v = _clean_cell(raw.get(_norm_txt(src), ""))
+            if v and not any(p.startswith(f"{label} :") for p in parts):
+                parts.append(f"{label} : {v}")
+        commentaire = " · ".join(parts)
+
+        # « 31 RUE DU DEPART » → « 31 Rue Du Depart », mais on ne retouche pas
+        # une adresse déjà correctement casée dans le suivi d'origine.
+        voie_lisible = voie.title() if voie.isupper() else voie
+        magasin = " ".join(x for x in [enseigne, voie_lisible] if x).strip()
+        magasin = magasin or enseigne or adresse
+
+        # Beaucoup de lignes n'ont que le code postal (« 119 Rue Ordener 75018 ») :
+        # le géocodage BAN complètera, et Paris se déduit du CP en attendant.
+        if not ville_txt and cp.startswith("75") and cp != "75000":
+            ville_txt = "Paris"
+        ville = ""
+        if ville_txt and cp:
+            ville = f"{ville_txt.title()} ({cp})"
+        elif ville_txt:
+            ville = ville_txt.title()
+        elif cp:
+            ville = cp
+
+        base = "|".join([date_iso, _norm_txt(enseigne), _norm_txt(adresse), _norm_txt(commercial)])
+        prepared.append({
+            "ID": "IMP-" + hashlib.md5(base.encode("utf-8")).hexdigest()[:10],
+            "Date": date_iso,
+            "Heure": "",
+            "Commercial": commercial,
+            "Enseigne": enseigne,
+            "Magasin": magasin[:120],
+            "Ville": ville,
+            "Projet": projet,
+            "Etat": "",
+            "Commentaire": commentaire,
+            "Photos_URLs": "",
+            "Latitude": "",
+            "Longitude": "",
+            "Adresse_complete": adresse,
+            "_cp": cp,
+            "_ville_txt": ville_txt,
+        })
+
+    # Une même ligne présente deux fois dans le fichier source : on ne garde qu'une visite
+    vus, uniques = set(), []
+    for p in prepared:
+        if p["ID"] in vus:
+            continue
+        vus.add(p["ID"])
+        uniques.append(p)
+    return uniques
+
+
+def geocode_prepared_rows(prepared):
+    """Complète Latitude / Longitude / Ville des lignes préparées via la BAN.
+
+    Un seul appel réseau pour tout le lot : c'est ce qui rend l'import rapide
+    et ce qui permet aux visites importées d'apparaître sur la carte.
+    """
+    rows = tuple(
+        (p["ID"], p["Adresse_complete"], p.get("_cp", ""), p.get("_ville_txt", ""))
+        for p in prepared if p["Adresse_complete"]
+    )
+    if not rows:
+        return 0
+    found = geocode_import_batch(rows)
+    nb = 0
+    for p in prepared:
+        hit = found.get(p["ID"])
+        if not hit:
+            continue
+        lat, lon, ville_ban, cp_ban = hit
+        p["Latitude"], p["Longitude"] = f"{lat:.6f}", f"{lon:.6f}"
+        if ville_ban:
+            p["Ville"] = f"{ville_ban.title()} ({cp_ban})" if cp_ban else ville_ban.title()
+        nb += 1
+    return nb
+
+
+def read_source_worksheet(sheet_ref, tab_name):
+    """Lit un onglet d'un Google Sheet tiers avec le compte de service de l'app.
+
+    `sheet_ref` accepte une URL complète ou un ID. Le Sheet doit être partagé
+    (au moins en lecture) avec le compte de service — son adresse est affichée
+    dans l'écran d'import.
+    """
+    ref = str(sheet_ref or "").strip()
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", ref)
+    sid = m.group(1) if m else ref
+    gc, _ = get_google_clients()
+    wb = gc.open_by_key(sid)
+    ws = wb.worksheet(str(tab_name).strip())
+    values = ws.get_all_values()
+    if not values:
+        return []
+
+    # L'en-tête n'est pas toujours en ligne 1 (titres, lignes de mise en forme) :
+    # on prend la première ligne qui contient une colonne « DATE ».
+    hdr_i = 0
+    for i, row in enumerate(values[:15]):
+        if any(_norm_txt(c) == "date" for c in row):
+            hdr_i = i
+            break
+    header = [str(c).strip() for c in values[hdr_i]]
+    out = []
+    for row in values[hdr_i + 1:]:
+        if not any(str(c).strip() for c in row):
+            continue
+        out.append({header[i]: (row[i] if i < len(row) else "") for i in range(len(header)) if header[i]})
+    return out
+
+
+def read_source_csv(uploaded):
+    """Lit un CSV téléversé (même structure que le suivi Google Sheet)."""
+    import csv as _csv
+    data = uploaded.getvalue()
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            text = data.decode(enc)
+            break
+        except Exception:
+            continue
+    else:
+        return []
+    sample = text[:4096]
+    try:
+        dialect = _csv.Sniffer().sniff(sample, delimiters=",;\t")
+        delim = dialect.delimiter
+    except Exception:
+        delim = ";" if sample.count(";") > sample.count(",") else ","
+    return list(_csv.DictReader(io.StringIO(text), delimiter=delim))
+
+
+def append_import_rows(prepared):
+    """Ajoute les visites importées à la Sheet, en ignorant celles déjà présentes."""
+    sheet = get_visits_sheet()
+    try:
+        existing = set(str(v).strip() for v in sheet.col_values(1))
+    except Exception:
+        existing = set()
+
+    nouvelles = [p for p in prepared if p["ID"] not in existing]
+    if not nouvelles:
+        return 0, len(prepared)
+
+    rows = [[p.get(col, "") for col in SHEET_COLUMNS] for p in nouvelles]
+    for i in range(0, len(rows), 200):     # par paquets : l'API Sheets n'aime pas les gros lots
+        sheet.append_rows(rows[i:i + 200], value_input_option="USER_ENTERED")
+    st.cache_data.clear()
+    return len(nouvelles), len(prepared) - len(nouvelles)
+
+
+def manage_import():
+    """Onglet admin « Import » : reprise d'un historique de visites."""
+    st.markdown("### 📥 Importer un historique de visites")
+    st.caption(
+        "Reprend un suivi terrain tenu dans un tableur (DATE / ENSEIGNE / ADRESSE + "
+        "commentaires) et l'ajoute aux visites de l'app. Chaque ligne reçoit un "
+        "identifiant calculé à partir de son contenu : tu peux relancer l'import "
+        "autant de fois que tu veux, les lignes déjà présentes sont ignorées."
+    )
+
+    try:
+        sa_mail = str(st.secrets["gcp_service_account"]["client_email"])
+    except Exception:
+        sa_mail = ""
+    if sa_mail:
+        st.info(
+            f"Pour lire un Google Sheet, partage-le (lecture seule suffit) avec :\n\n`{sa_mail}`"
+        )
+
+    source = st.radio("Source", ["Google Sheet", "Fichier CSV"], horizontal=True, key="imp_source")
+
+    col_c, col_p = st.columns(2)
+    with col_c:
+        commercial = st.text_input("Enregistrer au nom de", value="Vinita", key="imp_commercial")
+    with col_p:
+        projet = st.text_input("Projet / campagne", value=IMPORT_PROJET, key="imp_projet")
+
+    if source == "Google Sheet":
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            ref = st.text_input("Lien ou ID du Google Sheet", value=IMPORT_SHEET_DEFAUT, key="imp_ref")
+        with col2:
+            tab = st.text_input("Onglet", value=IMPORT_TAB_DEFAUT, key="imp_tab")
+        if st.button("🔎 Lire l'onglet", use_container_width=True):
+            try:
+                with st.spinner("Lecture du Google Sheet…"):
+                    st.session_state.imp_records = read_source_worksheet(ref, tab)
+                st.session_state.imp_prepared = None
+            except Exception as e:
+                st.session_state.imp_records = None
+                st.error(f"Lecture impossible : {e}")
+                st.caption(
+                    "Vérifie que l'onglet existe (nom exact, accents compris) et que le "
+                    "Sheet est bien partagé avec le compte de service ci-dessus."
+                )
+    else:
+        up = st.file_uploader("Fichier CSV du suivi", type=["csv"], key="imp_csv")
+        if up is not None and st.button("🔎 Lire le fichier", use_container_width=True):
+            try:
+                st.session_state.imp_records = read_source_csv(up)
+                st.session_state.imp_prepared = None
+            except Exception as e:
+                st.session_state.imp_records = None
+                st.error(f"Lecture impossible : {e}")
+
+    records = st.session_state.get("imp_records")
+    if not records:
+        return
+
+    st.success(f"{len(records)} ligne(s) lue(s) dans la source.")
+
+    prepared = st.session_state.get("imp_prepared")
+    if prepared is None:
+        prepared = prepare_import_rows(records, commercial.strip() or "Import", projet.strip() or IMPORT_PROJET)
+        st.session_state.imp_prepared = prepared
+
+    if not prepared:
+        st.warning(
+            "Aucune ligne exploitable : il faut au minimum une colonne DATE remplie "
+            "et une colonne ENSEIGNE ou ADRESSE."
+        )
+        return
+
+    st.markdown(f"**{len(prepared)}** visite(s) prêtes à importer")
+    apercu = pd.DataFrame(prepared)[
+        ["Date", "Enseigne", "Magasin", "Ville", "Commentaire"]
+    ]
+    st.dataframe(apercu, use_container_width=True, height=320)
+
+    sans_ville = sum(1 for p in prepared if not p["Ville"])
+    if sans_ville:
+        st.caption(f"⚠️ {sans_ville} ligne(s) sans ville identifiable — le géocodage va tenter de la retrouver.")
+
+    col_g, col_i = st.columns(2)
+    with col_g:
+        if st.button("📍 Géolocaliser les adresses", use_container_width=True):
+            with st.spinner("Géocodage via la Base Adresse Nationale…"):
+                nb = geocode_prepared_rows(prepared)
+            st.session_state.imp_prepared = prepared
+            st.success(f"{nb}/{len(prepared)} adresse(s) localisée(s).")
+            st.rerun()
+    with col_i:
+        deja_geo = sum(1 for p in prepared if p["Latitude"])
+        if st.button(f"✅ Importer les {len(prepared)} visites", use_container_width=True, type="primary"):
+            if not deja_geo:
+                with st.spinner("Géocodage via la Base Adresse Nationale…"):
+                    geocode_prepared_rows(prepared)
+            with st.spinner("Écriture dans la Sheet…"):
+                ajoutees, ignorees = append_import_rows(prepared)
+            store_index.clear()
+            build_tour_plan.clear()
+            st.success(
+                f"Import terminé : {ajoutees} visite(s) ajoutée(s), "
+                f"{ignorees} déjà présente(s) et ignorée(s). 🎉"
+            )
+            st.session_state.imp_records = None
+            st.session_state.imp_prepared = None
+
+
 # =========================================================================
 # ROUTING
 # =========================================================================
@@ -3634,6 +4759,13 @@ else:
         st.session_state.screen = "visit_detail"
         st.query_params.clear()
 
+    # Fiche magasin ouverte depuis un lien interne (?store=Nom||Ville)
+    if "store" in _qp:
+        st.session_state.store_detail = _qp.get("store", "")
+        st.session_state.store_back = "home"
+        st.session_state.screen = "store_detail"
+        st.query_params.clear()
+
     screen = st.session_state.screen
 
     if screen == "home":
@@ -3648,6 +4780,10 @@ else:
         screen_map()
     elif screen == "visit_detail":
         screen_visit_detail()
+    elif screen == "store_detail":
+        screen_store_detail()
+    elif screen == "tournees":
+        screen_tournees()
     elif screen == "history":
         screen_history()
     elif screen == "dashboard":
