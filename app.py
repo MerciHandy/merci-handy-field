@@ -21,6 +21,7 @@ import re
 import time
 import html
 import hashlib
+import difflib
 import unicodedata
 from PIL import Image, ImageOps
 from streamlit_geolocation import streamlit_geolocation
@@ -3676,12 +3677,43 @@ def store_index():
     return idx
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def store_vocab():
+    """Tous les mots présents dans l'index des magasins.
+
+    Sert de dictionnaire de correction : si le mot tapé n'existe nulle part,
+    on cherche les plus proches ici plutôt que de renvoyer zéro résultat.
+    """
+    words = set()
+    for s in store_index():
+        for w in re.split(r"[^a-z0-9]+", s.get("hay", "")):
+            if len(w) >= 3:
+                words.add(w)
+    return sorted(words)
+
+
+def _expand_token(token, vocab):
+    """Renvoie les graphies acceptables pour un mot tapé.
+
+    Si le mot est déjà contenu dans un mot connu (« oberkamp » → « oberkampf »),
+    on n'y touche pas : la recherche par sous-chaîne suffit. Sinon on suppose
+    une faute de frappe et on propose les mots les plus proches.
+    """
+    if len(token) < 4 or token.isdigit():
+        return [token]
+    for w in vocab:
+        if token in w:
+            return [token]
+    return difflib.get_close_matches(token, vocab, n=6, cutoff=0.75) or [token]
+
+
 def search_stores(query, limit=25):
     """Recherche libre : enseigne, nom, adresse, ville, code postal, département.
 
     Chaque mot saisi doit être retrouvé (ET, pas OU) — « monoprix 75011 » ne
     renvoie que les Monoprix du 11e. Un mot de 2 chiffres est compris comme un
-    département, un mot de 5 chiffres comme un code postal.
+    département, un mot de 5 chiffres comme un code postal, et un début de code
+    postal (« 750 ») marche aussi. Les fautes de frappe sont rattrapées.
     """
     idx = store_index()
     q = _norm_txt(query).strip()
@@ -3691,26 +3723,73 @@ def search_stores(query, limit=25):
     if not tokens:
         return []
 
-    out = []
-    for s in idx:
-        for t in tokens:
-            if re.fullmatch(r"\d{2}", t):
-                if s["dept"] != t and t not in s["hay"]:
+    def _run(plans):
+        found = []
+        for s in idx:
+            for kind, alts in plans:
+                if kind == "dept":
+                    if s["dept"] != alts[0] and alts[0] not in s["hay"]:
+                        break
+                elif not any(a in s["hay"] for a in alts):
                     break
-            elif t not in s["hay"]:
-                break
-        else:
-            out.append(s)
+            else:
+                found.append(s)
+        return found
 
+    # 1er passage : la saisie telle quelle. La correction orthographique coûte
+    # cher (comparaison à tout le vocabulaire) — on ne la déclenche que si la
+    # recherche exacte ne ramène rien, donc jamais pendant une frappe qui marche.
+    out = _run([("dept" if re.fullmatch(r"\d{2}", t) else "txt", [t]) for t in tokens])
+    if not out:
+        vocab = store_vocab()
+        plans = [("dept", [t]) if re.fullmatch(r"\d{2}", t)
+                 else ("txt", _expand_token(t, vocab)) for t in tokens]
+        out = _run(plans)
+
+    # Les correspondances exactes passent devant les corrections orthographiques
     first = tokens[0]
     type_rank = {"client": 0, "prospect": 1, "reseau": 2}
     out.sort(key=lambda s: (
+        -sum(1 for t in tokens if t in s["hay"]),
         0 if _norm_txt(s.get("magasin", "")).startswith(first) else 1,
         type_rank.get(s.get("type"), 3),
         -int(s.get("n") or 0),
         _norm_txt(s.get("magasin", "")),
     ))
     return out[:limit]
+
+
+STORE_TYPE_EMOJI = {"client": "💖", "prospect": "🔍", "reseau": "🏪"}
+
+
+def suggest_stores(term):
+    """Suggestions affichées PENDANT la saisie (combobox de l'accueil).
+
+    Renvoie des couples (libellé affiché, clé magasin) — le libellé porte déjà
+    le type de magasin et le nombre de passages, pour choisir sans ouvrir la fiche.
+    """
+    q = str(term or "").strip()
+    if len(q) < 2:
+        return []
+    out = []
+    for s in search_stores(q, limit=12):
+        emoji = STORE_TYPE_EMOJI.get(s.get("type"), "🏪")
+        lieu = str(s.get("ville", "") or s.get("adresse_reseau", ""))
+        n = int(s.get("n") or 0)
+        suffixe = (f"{n} passage" + ("s" if n > 1 else "")) if n else "jamais visité"
+        label = f"{emoji}  {s.get('magasin', '')} · {lieu} · {suffixe}"
+        out.append((label[:110], store_key(s)))
+    return out
+
+
+def reset_store_explorer(key_prefix="home"):
+    """Vide la recherche magasin.
+
+    Sans ça, revenir à l'accueil rouvrirait aussitôt la dernière fiche choisie :
+    le combobox garde sa sélection d'un rerun à l'autre.
+    """
+    for k in (f"{key_prefix}_store_box", f"{key_prefix}_store_last", f"{key_prefix}_store_q"):
+        st.session_state.pop(k, None)
 
 
 def open_store(s, back=None):
@@ -3749,7 +3828,41 @@ def render_store_card(s):
 
 
 def render_store_explorer(key_prefix="home", max_cards=10):
-    """Champ de recherche magasin + résultats cliquables (utilisé sur l'accueil)."""
+    """Champ de recherche magasin de l'accueil.
+
+    Avec streamlit-searchbox : les suggestions descendent sous le champ pendant
+    la frappe et choisir une ligne ouvre directement la fiche. Sans le composant,
+    on retombe sur un champ texte classique + une liste de cartes.
+
+    ⚠️ Comme ville_input, à garder HORS d'un st.form (sinon pas de suggestions).
+    """
+    box_key = f"{key_prefix}_store_box"
+    last_key = f"{key_prefix}_store_last"
+
+    if HAS_SEARCHBOX:
+        picked = st_searchbox(
+            suggest_stores,
+            key=box_key,
+            label="🔎 Rechercher un magasin",
+            placeholder="Monoprix Oberkampf · Nocibé 93 · rue de Rivoli · Créteil…",
+            debounce=200,
+            help="Enseigne, nom, adresse, ville, code postal ou département — "
+                 "les fautes de frappe sont rattrapées.",
+        )
+        if picked and st.session_state.get(last_key) != picked:
+            st.session_state[last_key] = picked
+            try:
+                st.session_state.pop(box_key, None)
+            except Exception:
+                pass
+            open_store(picked)
+            st.rerun()
+        st.caption(
+            "🔎 Tape une enseigne, un nom de magasin, une adresse, une ville, un code "
+            "postal ou un département — la fiche donne tout l'historique des visites."
+        )
+        return
+
     q = st.text_input(
         "Rechercher un magasin",
         key=f"{key_prefix}_store_q",
@@ -3829,6 +3942,7 @@ def screen_store_detail():
     back = st.session_state.get("store_back", "home")
     labels = {"home": "← Retour à l'accueil", "map": "← Retour à la carte", "tournees": "← Retour aux tournées"}
     if st.button(labels.get(back, "← Retour")):
+        reset_store_explorer("home")
         st.session_state.screen = back
         st.rerun()
 
