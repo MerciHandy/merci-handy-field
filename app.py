@@ -4047,6 +4047,7 @@ TOUR_JOURS_DEFAUT = ["Jeudi", "Vendredi"]
 TOUR_COOLDOWN_J = 21      # un magasin vu il y a moins de 3 semaines n'est pas reproposé
 TOUR_CADENCE_J = 60       # rythme de repassage visé dans un magasin client
 TOUR_RAYON_M = 6000       # on ne saute pas d'un bout à l'autre de l'IDF dans la journée
+TOUR_ZONE_M = 2500        # côté d'une case de la grille servant à choisir la zone du jour
 
 
 def _travel_minutes(dist_m):
@@ -4128,6 +4129,50 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
     return cands
 
 
+def _zone_key(lat, lon, cell_m=TOUR_ZONE_M):
+    """Case de grille (~2,5 km de côté) contenant un point.
+
+    Le 0,66 est le cosinus de la latitude de l'IDF : sans lui, une case serait
+    deux fois plus large en longitude qu'en latitude.
+    """
+    return (int(lat * 111_320 // cell_m), int(lon * 111_320 * 0.66 // cell_m))
+
+
+def pick_day_seed(cands, used, top_n=15):
+    """Magasin de départ de la journée, choisi par ZONE et pas seulement par urgence.
+
+    On découpe la région en cases de ~2,5 km, puis on note chaque bloc de 3×3
+    cases par la somme des `top_n` meilleures priorités qu'il contient — soit
+    à peu près ce qu'une journée peut absorber. On démarre dans le bloc le plus
+    riche, sur son magasin le plus prioritaire.
+
+    Sans ça, la journée se construisait autour du magasin le plus urgent de
+    toute l'IDF, même isolé : on partait à Cergy pour un seul magasin en
+    laissant une grappe presque aussi urgente dans Paris centre.
+    """
+    libres = [c for c in cands if store_key(c) not in used]
+    if not libres:
+        return None
+
+    cells = {}
+    for c in libres:
+        cells.setdefault(_zone_key(c["lat"], c["lon"]), []).append(c)
+
+    best_bloc, best_val = None, -1.0
+    for (i, j) in cells:
+        bloc = []
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                bloc.extend(cells.get((i + di, j + dj), ()))
+        val = sum(sorted((c["score"] for c in bloc), reverse=True)[:top_n])
+        if val > best_val:
+            best_bloc, best_val = bloc, val
+
+    if not best_bloc:
+        return libres[0]
+    return max(best_bloc, key=lambda c: c["score"])
+
+
 def build_day_route(cands, used, visit_min, start_min, end_min, lunch_min_start, lunch_len):
     """Construit UNE journée de tournée.
 
@@ -4135,7 +4180,10 @@ def build_day_route(cands, used, visit_min, start_min, end_min, lunch_min_start,
     proche en proche : à chaque étape on choisit le magasin qui maximise
     priorité / temps de trajet, tant qu'il reste du temps avant la fin de journée.
     """
-    seed = next((c for c in cands if store_key(c) not in used), None)
+    # Nombre de magasins qu'une journée peut absorber (visite + trajet moyen) :
+    # sert à noter les zones sur ce qu'on pourra réellement y faire.
+    capacite = max(6, int((end_min - start_min - lunch_len) / max(visit_min + 8, 1)))
+    seed = pick_day_seed(cands, used, top_n=capacite)
     if seed is None:
         return []
 
