@@ -2476,36 +2476,52 @@ def build_map_points():
 
         used = set()  # une visite ne peut absorber qu'UN magasin du réseau
         for ns, ens, ens_norm, ns_cp, ns_city, ns_tokens in ns_meta:
-            match_idx = None
+            # On ne prend PAS la première visite qui colle : on garde la
+            # meilleure (règle la plus sûre, puis la plus proche). Sans ça, en
+            # centre-ville la première visite trouvée à moins de 150 m gagnait,
+            # même si une autre était à 20 m — d'où des adresses échangées
+            # entre deux magasins voisins.
+            match_idx, best_rank = None, None
             for idx, (p_nom, p_tokens, p_cp, p_city, p_ens) in p_meta.items():
                 if idx in used:
                     continue
                 p = points[idx]
+                # enseigne compatible : égale, contenue (« Galeries Lafayettes »/
+                # « Galeries Lafayette ») ou présente dans le nom du magasin
+                ens_ok = bool(ens_norm) and (
+                    (p_ens and (p_ens in ens_norm or ens_norm in p_ens))
+                    or ens_norm in p_nom
+                )
+                # Deux enseignes connues ET différentes ne sont jamais le même
+                # magasin, même porte à porte (vécu : le Monoprix du 5 rue Letort
+                # et le Marionnaud du 119 rue Ordener, à 40 m, s'échangeaient
+                # leurs adresses via la règle des 150 m).
+                if bool(ens_norm) and bool(p_ens) and not ens_ok:
+                    continue
+                dist = (None if p["approx"]
+                        else _dist_m(p["lat"], p["lon"], ns["lat"], ns["lon"]))
+                far = 10 ** 9   # pas de GPS exploitable : on ne départage pas par distance
                 # 1) même nom (sans accents/casse)
                 if p_nom == _norm_txt(ns["nom"]):
-                    match_idx = idx
-                    break
+                    rank = (0, dist if dist is not None else far, 0)
                 # 2) visite géolocalisée à < 150 m du magasin
-                if not p["approx"] and _dist_m(p["lat"], p["lon"], ns["lat"], ns["lon"]) < 150:
-                    match_idx = idx
-                    break
-                # 3) rapprochement par lieu : même CP, ou même nom de ville
-                same_place = (p_cp and p_cp == ns_cp) or (p_city and ns_city and p_city == ns_city)
-                if same_place:
-                    # enseigne compatible : égale, contenue (« Galeries Lafayettes »/
-                    # « Galeries Lafayette ») ou présente dans le nom du magasin
-                    ens_ok = bool(ens_norm) and (
-                        (p_ens and (p_ens in ens_norm or ens_norm in p_ens))
-                        or ens_norm in p_nom
-                    )
+                elif dist is not None and dist < 150:
+                    rank = (1, dist, 0)
+                else:
+                    # 3) rapprochement par lieu : même CP, ou même nom de ville
+                    same_place = (p_cp and p_cp == ns_cp) or (p_city and ns_city and p_city == ns_city)
+                    if not same_place:
+                        continue
                     if p_cp and p_cp == ns_cp:
                         unique_here = cnt_cp.get((ens_norm, ns_cp), 0) == 1
                     else:
                         unique_here = cnt_city.get((ens_norm, ns_city), 0) == 1
                     common = len(p_tokens & ns_tokens)
-                    if (ens_ok and (unique_here or common >= 1)) or common >= 2:
-                        match_idx = idx
-                        break
+                    if not ((ens_ok and (unique_here or common >= 1)) or common >= 2):
+                        continue
+                    rank = (2, -common, dist if dist is not None else far)
+                if best_rank is None or rank < best_rank:
+                    match_idx, best_rank = idx, rank
             if match_idx is not None:
                 used.add(match_idx)
                 match = points[match_idx]
