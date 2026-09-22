@@ -1570,12 +1570,13 @@ def screen_new_visit():
             else:
                 st.success(f"💖 Visite enregistrée ! ({len(photo_urls)} photo(s) uploadée(s))")
             st.balloons()
+            retour = (st.session_state.get("map_prefill") or {}).get("back") or "home"
             for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops", "geo_selected",
                   "visit_ville_query", "visit_ville_pick", "visit_ville_geo", "visit_ville_box",
                   "prospect_ville_query", "prospect_ville_pick", "prospect_ville_geo", "prospect_ville_box", "map_prefill",
                   "visit_ens_pick", "prospect_ens_pick"]:
                 st.session_state.pop(k, None)
-            st.session_state.screen = "home"
+            st.session_state.screen = retour
             st.rerun()
 
 
@@ -4055,8 +4056,9 @@ def screen_store_detail():
 # =========================================================================
 # Objectif : dire aux équipes terrain OÙ aller et DANS QUEL ORDRE, 2 jours par
 # semaine, 10h-18h avec une heure de pause, 10 à 20 min par magasin.
-# Le plan est recalculé à chaque ouverture de l'écran à partir des visites
-# réellement enregistrées : un magasin visité sort automatiquement du plan.
+# Le plan est recalculé à partir des visites enregistrées AVANT aujourd'hui :
+# il reste donc figé toute la journée. Une visite saisie aujourd'hui coche le
+# magasin (✅) sans rebâtir la tournée ; il sort du plan dès le lendemain.
 
 TOUR_JOURS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 TOUR_JOURS_DEFAUT = ["Jeudi", "Vendredi"]
@@ -4088,6 +4090,11 @@ def _days_since(date_str, today):
     return (today - d).days
 
 
+def _tour_done_key(magasin, ville):
+    """Clé de rapprochement tournée ↔ visite saisie (insensible à la casse)."""
+    return (str(magasin or "").strip().lower(), str(ville or "").strip().lower())
+
+
 def _hhmm(minutes):
     return f"{int(minutes) // 60:02d}:{int(minutes) % 60:02d}"
 
@@ -4099,8 +4106,12 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
     Un magasin jamais visité passe devant ; un magasin dont le dernier passage
     signalait un souci (rupture, mauvais emplacement, prix…) remonte aussi.
     Les magasins vus il y a moins de `cooldown` jours sont écartés.
+
+    Les passages datés d'aujourd'hui (ou plus tard) sont ignorés : la tournée du
+    jour ne doit pas se recomposer à chaque visite saisie en cours de route.
     """
     today = today or datetime.now().date()
+    today_iso = today.isoformat()
     cands = []
     for s in store_index():
         if s.get("dept") not in depts:
@@ -4112,6 +4123,8 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
         for h in (s.get("hist_all") or []):
             if not h.get("date"):
                 continue
+            if str(h["date"])[:10] >= today_iso:
+                continue      # passage du jour : ne fait pas bouger le plan
             if not last_any:
                 last_any = h["date"]
             if h.get("kind") == "visite" and not last_v:
@@ -4247,12 +4260,16 @@ def build_day_route(cands, used, visit_min, start_min, end_min, lunch_min_start,
 
 
 def next_dates(jours, count, today=None):
-    """Prochaines dates correspondant aux jours de semaine retenus."""
+    """Prochaines dates correspondant aux jours de semaine retenus.
+
+    Aujourd'hui compris : si c'est un jour de terrain, la tournée du jour reste
+    affichée pendant qu'on la fait.
+    """
     today = today or datetime.now().date()
     wanted = {TOUR_JOURS.index(j) for j in jours if j in TOUR_JOURS}
     if not wanted:
         return []
-    out, d, guard = [], today + timedelta(days=1), 0
+    out, d, guard = [], today, 0
     while len(out) < count and guard < 200:
         if d.weekday() in wanted:
             out.append(d)
@@ -4264,18 +4281,24 @@ def next_dates(jours, count, today=None):
 @st.cache_data(ttl=900, show_spinner=False)
 def build_tour_plan(depts_t, jours_t, visit_min, nb_semaines,
                     start_min, end_min, lunch_min_start, lunch_len,
-                    cadence, cooldown, stamp):
+                    cadence, cooldown, stamp, anchor=""):
     """Plan complet : `nb_semaines` semaines × les jours choisis.
 
     `stamp` (nombre de visites enregistrées) fait partie de la clé de cache :
     dès qu'une visite est saisie, le plan est recalculé automatiquement.
+    `anchor` (date du jour, ISO) : le plan ne tient compte que des visites
+    antérieures, donc il reste identique tout au long de la journée.
     """
-    cands = tour_candidates(list(depts_t), cadence=cadence, cooldown=cooldown)
+    try:
+        today = datetime.strptime(anchor, "%Y-%m-%d").date()
+    except Exception:
+        today = datetime.now().date()
+    cands = tour_candidates(list(depts_t), cadence=cadence, cooldown=cooldown, today=today)
     if not cands:
         return [], 0
 
     used = set()
-    dates = next_dates(list(jours_t), nb_semaines * max(len(jours_t), 1))
+    dates = next_dates(list(jours_t), nb_semaines * max(len(jours_t), 1), today=today)
     days = []
     for d in dates:
         route = build_day_route(cands, used, visit_min, start_min, end_min,
@@ -4380,8 +4403,15 @@ def screen_tournees():
         store_index.clear()
         st.rerun()
 
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    fait_auj = set()   # magasins déjà visités aujourd'hui → cochés dans la tournée
     try:
-        stamp = len(load_visits())
+        df_v = load_visits()
+        stamp = len(df_v)
+        if not df_v.empty and "Date" in df_v.columns:
+            for _, r in df_v.iterrows():
+                if str(r.get("Date", "")).strip()[:10] >= today_iso:
+                    fait_auj.add(_tour_done_key(r.get("Magasin", ""), r.get("Ville", "")))
     except Exception:
         stamp = 0
 
@@ -4389,7 +4419,7 @@ def screen_tournees():
         days, nb_cands = build_tour_plan(
             tuple(sorted(depts)), tuple(jours), int(visit_min), int(nb_semaines),
             int(h_debut) * 60, int(h_fin) * 60, int(h_pause) * 60, int(duree_pause),
-            int(cadence), int(cooldown), stamp,
+            int(cadence), int(cooldown), stamp, today_iso,
         )
 
     if not days:
@@ -4399,7 +4429,11 @@ def screen_tournees():
         )
         return
 
-    total_stops = sum(len(d["stops"]) for d in days)
+    def _fait(stop):
+        s_ = stop["store"]
+        return _tour_done_key(s_.get("magasin", ""), s_.get("ville", "")) in fait_auj
+
+    total_stops = sum(1 for d in days for st_ in d["stops"] if not _fait(st_))
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         st.markdown(f'<div class="stat-card pink"><div class="stat-number">{len(days)}</div><div class="stat-label">Journées</div></div>', unsafe_allow_html=True)
@@ -4410,8 +4444,8 @@ def screen_tournees():
 
     st.caption(
         f"Priorité aux magasins jamais visités, puis à ceux vus il y a plus de {cadence} jours "
-        f"ou dont le dernier passage signalait un souci. Une visite saisie fait disparaître "
-        f"le magasin des tournées suivantes."
+        f"ou dont le dernier passage signalait un souci. La tournée du jour reste figée : "
+        f"une visite saisie coche le magasin ✅, qui sort du plan à partir du lendemain."
     )
     st.write("")
 
@@ -4423,7 +4457,10 @@ def screen_tournees():
             v = _city_of(s["store"].get("ville", "")) or s["store"].get("ville", "")
             if v and v not in villes:
                 villes.append(v)
-        titre = f'📅 {_date_longue(day["date"]).capitalize()} — {len(stops)} magasins (jusqu\'à {fin})'
+        nb_fait = sum(1 for st_ in stops if _fait(st_))
+        jour = "Aujourd'hui" if day["date"] == today_iso else _date_longue(day["date"]).capitalize()
+        avancement = f" · ✅ {nb_fait}/{len(stops)}" if nb_fait else ""
+        titre = f'📅 {jour} — {len(stops)} magasins (jusqu\'à {fin}){avancement}'
         with st.expander(titre, expanded=(di == 0)):
             zone = ", ".join(villes[:4]) + ("…" if len(villes) > 4 else "")
             url = _maps_route_url(stops)
@@ -4447,11 +4484,14 @@ def screen_tournees():
 
                 lieu = s.get("adresse_reseau", "") or s.get("ville", "")
                 trajet = f'🚶 {stop["trajet"]} min de trajet · ' if stop["trajet"] else ""
+                fait = _fait(stop)
+                carte_style = "padding:12px 14px;" + ("opacity:0.55;" if fait else "")
+                heure = "✅" if fait else _hhmm(stop["debut"])
                 st.markdown(
-                    f'<div class="visit-card" style="padding:12px 14px;">'
+                    f'<div class="visit-card" style="{carte_style}">'
                     f'<div style="display:flex;gap:10px;align-items:flex-start;">'
                     f'<div style="font-weight:800;color:{PRIMARY};font-size:15px;min-width:52px;">'
-                    f'{_hhmm(stop["debut"])}</div>'
+                    f'{heure}</div>'
                     f'<div style="flex:1;">'
                     f'{logo_img(s.get("enseigne", ""), height=16)}'
                     f'<strong style="font-size:14px;">{html.escape(str(s.get("magasin", "")))}</strong><br>'
@@ -4466,7 +4506,10 @@ def screen_tournees():
                         open_store(s, back="tournees")
                         st.rerun()
                 with col_v:
-                    if st.button("➕ Visite", key=f"tour_v_{di}_{si}", use_container_width=True):
+                    if fait:
+                        st.button("✅ Visité aujourd'hui", key=f"tour_v_{di}_{si}",
+                                  use_container_width=True, disabled=True)
+                    elif st.button("➕ Visite", key=f"tour_v_{di}_{si}", use_container_width=True):
                         for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops",
                                   "geo_selected", "visit_ville_query", "visit_ville_pick",
                                   "visit_ville_geo", "visit_ville_box", "visit_ens_pick"]:
@@ -4475,6 +4518,7 @@ def screen_tournees():
                             "magasin": s.get("magasin", ""),
                             "ville": s.get("ville", ""),
                             "enseigne": s.get("enseigne", ""),
+                            "back": "tournees",   # après la saisie, on revient à la tournée
                         }
                         st.session_state.screen = "new_visit"
                         st.rerun()
