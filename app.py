@@ -2179,9 +2179,16 @@ def load_network_stores():
             adresse_tag = " ".join((pm.findtext(f"{_KML_NS}address") or "").split())
             vals = list(fields.values())
             adresse = adresse_tag or fields.get("unnamed (3)", "") or max(vals, key=len, default="")
-            tel = next((v for v in vals if re.fullmatch(r"0\d{9}", v)), "")
-            code = fields.get("unnamed (1)", "")
-            nom = fields.get("unnamed (2)", "") or pm_name
+            tel = next((v for v in vals if re.fullmatch(r"0\d{9}", v.replace(" ", ""))), "")
+            code = fields.get("unnamed (1)", "") or fields.get("storeID", "")
+            # Nom du magasin : « unnamed (2) » chez Marionnaud, « Nom » chez
+            # Sephora, « NOM MAGAGIN » aux Galeries… Monoprix / Nocibé n'en ont
+            # pas : le nom du repère n'est alors que la ville (voir plus bas).
+            nom = fields.get("unnamed (2)", "") or next(
+                (v for k, v in fields.items() if re.match(r"^\s*nom\b", k, re.I) and v), "")
+            # Rue seule (sans CP ni ville) : sert à nommer et à reconnaître le magasin
+            rue = fields.get("unnamed (3)", "") or next(
+                (v for k, v in fields.items() if re.search(r"adresse", k, re.I) and v), "")
 
             cp = next((v for v in vals if re.fullmatch(r"\d{5}", v)), "")
             m_cp = re.search(r"\b(\d{5})\s+(.+?)\s*$", adresse)
@@ -2189,8 +2196,22 @@ def load_network_stores():
             if m_cp:
                 cp = cp or m_cp.group(1)
                 city = m_cp.group(2)
-            if not city and pm_name and not any(ch.isdigit() for ch in pm_name):
-                city = pm_name
+            # Le nom du repère est la ville chez la plupart des enseignes ; il est
+            # plus fiable que la fin de l'adresse (Nocibé : « 78260 ACHERES CCAL… »).
+            if pm_name and not any(ch.isdigit() for ch in pm_name):
+                if not city or _norm_txt(pm_name) in _norm_txt(adresse):
+                    city = pm_name
+            if not cp:
+                m5 = re.search(r"\b(\d{5})\b", adresse)
+                cp = m5.group(1) if m5 else ""
+
+            # Un « nom » qui n'est que la ville (« PARIS », « ALFORTVILLE ») ne
+            # distingue rien : on nomme alors le magasin par sa rue.
+            if not nom or not (_tokens(nom) - _tokens(city) - _tokens(pm_name)):
+                if not rue:
+                    rue = re.sub(r"\b\d{5}\b.*$", "", adresse).strip(" ,-")
+                nom = rue or nom or pm_name
+            rue = rue or re.sub(r"\b\d{5}\b.*$", "", adresse).strip(" ,-")
 
             # Ligne d'en-tête / gabarit du calque My Maps : pas un vrai magasin
             if not adresse and not cp and not city:
@@ -2210,7 +2231,7 @@ def load_network_stores():
                 ville = f"{city.title()} ({cp})" if cp else city.title()
 
             stores.append({
-                "nom": nom, "code": code, "ville": ville, "adresse": adresse,
+                "nom": nom, "code": code, "ville": ville, "adresse": adresse, "rue": rue,
                 "cp": cp, "city": city, "tel": tel, "layer": layer,
                 "lat": lat, "lon": lon, "approx": False,
             })
@@ -2366,17 +2387,122 @@ def _enseigne_reseau(layer, nom, enseignes_cfg):
     return label.title() if label else ""
 
 
+def _iso_date(v):
+    """Date au format ISO (AAAA-MM-JJ) — accepte aussi « 25/09/2026 »."""
+    s = str(v or "").strip()
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
+    if m:
+        return f"{m.group(3)}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    return s
+
+
+# Mots trop génériques pour identifier un magasin (gares, saints, voies…)
+_STORE_STOP = {"centre", "commercial", "ccial", "cial", "ccal", "france", "rue", "avenue", "place",
+               "les", "grand", "grande", "gare", "saint", "sainte", "boulevard", "bld", "faubourg",
+               "fbg", "porte", "cour", "cours", "monop", "daily", "beauty", "ville", "nord", "sud",
+               "est", "ouest", "bis", "des", "del", "rer", "sncf", "niveau"}
+
+
+def _store_numbers(s):
+    """Numéros de rue d'un nom ou d'une adresse (« 52/54 av… » → {52, 54}), sans les CP."""
+    t = re.sub(r"\b\d{5}\b", " ", _norm_txt(s))
+    return {str(int(n)) for n in re.findall(r"(?<![a-z0-9])(\d{1,4})(?=bis\b|ter\b|[^a-z0-9]|$)", t)}
+
+
+def _store_words(s):
+    """Mots distinctifs (≥ 3 lettres, sans chiffres) d'un nom de magasin.
+
+    Un mot collé à son article (« DOBERKAMPF », « LHOPITAL », « DALESIA ») est
+    ramené à sa forme sans l'article ; la règle s'applique des deux côtés de la
+    comparaison, donc « Lazare » → « azare » reste cohérent.
+    """
+    out = set()
+    for t in _tokens(s):
+        if t.isdigit():
+            continue
+        if len(t) >= 6 and t[0] in "dl" and t[1] in "aeiouyh":
+            t = t[1:]
+        out.add(t)
+    return out
+
+
+def _phrase(s):
+    """Texte comparable : sans accents/casse, « St » → « saint », ponctuation → espaces."""
+    t = re.sub(r"[^a-z0-9]+", " ", _norm_txt(s))
+    t = re.sub(r"\bste\b", "sainte", re.sub(r"\bst\b", "saint", t))
+    return " " + " ".join(t.split()) + " "
+
+
+def _merge_store_group(members, base=None):
+    """Fusionne plusieurs fiches (variantes de nom d'un même magasin) en une seule.
+
+    `base` : magasin du réseau My Maps auquel elles se rattachent (nom, adresse
+    et position officiels). Sans réseau, on garde le nom et la position de la
+    saisie la plus récente.
+    """
+    hist = []
+    for m in members:
+        hist.extend(m["hist_all"])
+    hist.sort(key=lambda h: (h.get("date", ""), h.get("heure", "")), reverse=True)
+    aliases = []
+    for m in members:
+        for a in m.get("aliases", []):
+            if a not in aliases:
+                aliases.append(a)
+
+    recent = max(members, key=lambda m: (m["hist_all"][0].get("date", ""),
+                                         m["hist_all"][0].get("heure", ""))
+                 if m["hist_all"] else ("", ""))
+    enseigne = next((m["enseigne"] for m in [recent] + members if m.get("enseigne")), "")
+    precise = [m for m in members if not m.get("approx") and m.get("lat") is not None]
+    pos_src = max(precise, key=lambda m: m["hist_all"][0].get("date", "") if m["hist_all"] else "") \
+        if precise else recent
+
+    s = {
+        "magasin": recent["magasin"], "ville": recent["ville"], "enseigne": enseigne,
+        "type": "client" if any(m["type"] == "client" for m in members) else "prospect",
+        "lat": pos_src.get("lat"), "lon": pos_src.get("lon"), "approx": bool(pos_src.get("approx")),
+        "n": sum(m["n"] for m in members), "hist_all": hist, "hist": hist[:3],
+        "aliases": aliases,
+    }
+    if base is not None:
+        s["magasin"], s["ville"] = base["nom"], base["ville"] or recent["ville"]
+        s["enseigne"] = s["enseigne"] or base["ens"]
+        s["code"], s["tel"], s["adresse_reseau"] = base["code"], base["tel"], base["adresse"]
+        # Position officielle du magasin, sauf si My Maps ne l'a placé qu'au
+        # centre de la ville et qu'on a mieux (GPS d'une visite).
+        if not (base.get("approx") and precise):
+            s["lat"], s["lon"], s["approx"] = base["lat"], base["lon"], bool(base.get("approx"))
+        key = (str(base["nom"]).strip().lower(), str(s["ville"]).strip().lower(), _norm_txt(s["enseigne"]))
+        if key not in s["aliases"]:
+            s["aliases"].append(key)
+    return s
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def build_map_points():
-    """Agrège visites + démarchages par magasin (nom + ville).
+    """Agrège visites + démarchages par MAGASIN.
+
+    Un même magasin est souvent saisi sous plusieurs noms (« St LAZARE »,
+    « Marionnaud 94 Rue St Lazare », « 94 Rue St Lazare »…). On regroupe donc :
+    1. les lignes au nom + ville identiques ;
+    2. toutes les variantes qui se rattachent au même magasin du réseau My Maps
+       (même nom, GPS à < 150 m, ou même CP/ville + mots du nom ou de l'adresse) ;
+    3. les variantes hors réseau de la même enseigne au même endroit.
+    Sans ça, l'historique d'un magasin était éparpillé : la tournée ne voyait
+    qu'une partie des passages et reproposait des magasins vus récemment.
 
     Renvoie (points, nb_approx, nb_sans_position) :
-    - points : liste de dicts {magasin, ville, enseigne, type, lat, lon, approx, n, hist}
-      · type "client" (au moins une visite) ou "prospect" (démarchage uniquement)
-      · hist : 3 derniers passages, du plus récent au plus ancien
+    - points : liste de dicts {magasin, ville, enseigne, type, lat, lon, approx, n,
+      hist, hist_all, aliases}
+      · type "client" (au moins une visite), "prospect" (démarchage uniquement)
+        ou "reseau" (magasin My Maps jamais vu)
+      · hist_all : tous les passages, du plus récent au plus ancien ; hist : les 3 premiers
+      · aliases : triplets (nom, ville, enseigne) en minuscules sous lesquels il a été saisi
     - nb_approx : magasins placés au centre de leur ville (pas de GPS enregistré)
     - nb_sans_position : magasins impossibles à placer
     """
+    # --- 1. Regroupement par nom + ville identiques --------------------------
     stores = {}
     for kind, loader in (("visite", load_visits), ("prospect", load_prospects)):
         try:
@@ -2385,25 +2511,27 @@ def build_map_points():
             continue
         if df.empty or "Magasin" not in df.columns:
             continue
-        try:
-            df = df.sort_values(by=["Date", "Heure"])  # chronologique : le plus récent écrase
-        except Exception:
-            pass
+        rows = []
         for _, r in df.iterrows():
+            rows.append((_iso_date(r.get("Date", "")), str(r.get("Heure", "")).strip(), r))
+        rows.sort(key=lambda x: (x[0], x[1]))   # chronologique : le plus récent écrase
+        for date_iso, heure, r in rows:
             mag = str(r.get("Magasin", "")).strip()
             ville = str(r.get("Ville", "")).strip()
             if not mag:
                 continue
-            key = (mag.lower(), ville.lower())
+            ens = str(r.get("Enseigne", "")).strip()
+            # L'enseigne fait partie de la clé : « St lazare » à Paris existe chez
+            # Sephora ET chez Marionnaud — ce sont deux magasins différents.
+            key = (mag.lower(), ville.lower(), _norm_txt(ens))
             s = stores.setdefault(key, {
                 "magasin": mag, "ville": ville, "enseigne": "",
                 "type": "prospect", "lat": None, "lon": None,
-                "n": 0, "hist": [],
+                "n": 0, "hist": [], "aliases": [key],
             })
             if kind == "visite":
                 s["type"] = "client"
             s["n"] += 1
-            ens = str(r.get("Enseigne", "")).strip()
             if ens:
                 s["enseigne"] = ens
             lat, lon = _to_float(r.get("Latitude")), _to_float(r.get("Longitude"))
@@ -2412,13 +2540,15 @@ def build_map_points():
             detail = str(r.get("Etat", "") if kind == "visite" else r.get("Statut", "")).strip()
             s["hist"].append({
                 "id": str(r.get("ID", "")).strip(),
-                "date": str(r.get("Date", "")).strip(),
+                "date": date_iso,
+                "heure": heure,
                 "detail": detail,
                 "commercial": str(r.get("Commercial", "")).strip(),
                 "kind": kind,
+                "magasin": mag,
             })
 
-    points, nb_approx, nb_sans_position = [], 0, 0
+    points, nb_sans_position = [], 0
     for s in stores.values():
         s["hist_all"] = list(reversed(s["hist"]))
         s["hist"] = s["hist_all"][:3]
@@ -2428,122 +2558,214 @@ def build_map_points():
             if centre:
                 s["lat"], s["lon"] = centre
                 s["approx"] = True
-                nb_approx += 1
-            else:
-                nb_sans_position += 1
-                continue
         points.append(s)
 
-    # --- Réseau My Maps : magasins du réseau, visités ou non -----------------
+    # --- 2. Rattachement au réseau My Maps -----------------------------------
     try:
         network = load_network_stores()
     except Exception:
         network = []
-    if network:
-        try:
-            enseignes_cfg = load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES))
-        except Exception:
-            enseignes_cfg = list(DEFAULT_ENSEIGNES)
-        # Unicité enseigne/CP : si Nocibé n'a qu'UN magasin à Lille (59000), une
-        # visite « Nocibé » à Lille peut lui être rattachée sans ambiguïté.
-        # Mots trop génériques pour identifier un magasin (gares, saints, voies…)
-        _STOP = {"centre", "commercial", "france", "rue", "avenue", "place", "les", "grand", "grande",
-                 "gare", "saint", "sainte", "boulevard", "faubourg", "fbg", "porte", "cour", "cours",
-                 "monop", "daily", "beauty", "ville", "nord", "sud", "est", "ouest"}
-        cnt_cp, cnt_city = {}, {}
-        ns_meta = []
-        for ns in network:
-            ens = _enseigne_reseau(ns["layer"], ns["nom"], enseignes_cfg)
-            ens_norm = _norm_txt(ens)
-            ns_cp = ns.get("cp", "")
-            ns_city = _norm_txt(ns.get("city", ""))
-            if ns_cp:
-                cnt_cp[(ens_norm, ns_cp)] = cnt_cp.get((ens_norm, ns_cp), 0) + 1
-            if ns_city:
-                cnt_city[(ens_norm, ns_city)] = cnt_city.get((ens_norm, ns_city), 0) + 1
-            # Mots distinctifs du nom : sans l'enseigne, la ville ni les mots génériques
-            distinct = _tokens(ns["nom"]) - _tokens(ens) - _tokens(ns.get("city", "")) - _STOP
-            ns_meta.append((ns, ens, ens_norm, ns_cp, ns_city, distinct))
+    try:
+        enseignes_cfg = load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES))
+    except Exception:
+        enseignes_cfg = list(DEFAULT_ENSEIGNES)
 
-        # Précalcul côté visites (les points réseau ajoutés ensuite n'y figurent pas)
-        p_meta = {
-            idx: (_norm_txt(p["magasin"]),
-                  _tokens(p["magasin"]) - _tokens(p["enseigne"]) - _tokens(p["ville"]) - _STOP,
-                  _cp_of(p["ville"]),
-                  _city_of(p["ville"]),
-                  _norm_txt(p["enseigne"]))
-            for idx, p in enumerate(points)
-        }
+    cnt_cp, cnt_city = {}, {}
+    ns_meta = []
+    for ns in network:
+        ens = _enseigne_reseau(ns["layer"], ns["nom"], enseignes_cfg)
+        ens_norm = _norm_txt(ens)
+        ns_cp = ns.get("cp", "")
+        ns_city = _norm_txt(ns.get("city", ""))
+        if ns_cp:
+            cnt_cp[(ens_norm, ns_cp)] = cnt_cp.get((ens_norm, ns_cp), 0) + 1
+        if ns_city:
+            cnt_city[(ens_norm, ns_city)] = cnt_city.get((ens_norm, ns_city), 0) + 1
+        generic = _tokens(ens) | _tokens(ns.get("city", "")) | _STORE_STOP
+        rue = ns.get("rue", "") or ns.get("adresse", "")
+        ns_meta.append({
+            **ns, "ens": ens, "ens_norm": ens_norm, "ns_city": ns_city,
+            "nom_norm": _norm_txt(ns["nom"]),
+            "ph_nom": _phrase(ns["nom"]),
+            "ph_rue": _phrase(rue),
+            # mots distinctifs du NOM (« lazare », « havre »…) et de l'ADRESSE (« lazare »…)
+            "tok_nom": _store_words(ns["nom"]) - generic,
+            "tok_rue": _store_words(rue) - generic,
+            # numéros de rue (« 109 », « 52/54 » → 52 et 54)
+            "nums": _store_numbers(rue) | _store_numbers(ns["nom"]),
+        })
 
-        used = set()  # une visite ne peut absorber qu'UN magasin du réseau
-        for ns, ens, ens_norm, ns_cp, ns_city, ns_tokens in ns_meta:
-            # On ne prend PAS la première visite qui colle : on garde la
-            # meilleure (règle la plus sûre, puis la plus proche). Sans ça, en
-            # centre-ville la première visite trouvée à moins de 150 m gagnait,
-            # même si une autre était à 20 m — d'où des adresses échangées
-            # entre deux magasins voisins.
-            match_idx, best_rank = None, None
-            for idx, (p_nom, p_tokens, p_cp, p_city, p_ens) in p_meta.items():
-                if idx in used:
+    groups = {}      # indice réseau -> fiches de visite rattachées
+    unmatched = []
+    for p in points:
+        p_nom = _norm_txt(p["magasin"])
+        p_ens = _norm_txt(p["enseigne"])
+        p_tokens = _store_words(p["magasin"]) - _tokens(p["enseigne"]) - _tokens(p["ville"]) - _STORE_STOP
+        p_nums = _store_numbers(p["magasin"])
+        p_cp, p_city = _cp_of(p["ville"]), _city_of(p["ville"])
+        # nom saisi sans l'enseigne, pour le chercher tel quel dans le nom/la rue
+        p_ph = _phrase(p["magasin"])
+        for w in _phrase(p["enseigne"]).split():
+            p_ph = p_ph.replace(f" {w} ", " ")
+        p_ph = p_ph if len(p_ph.strip()) >= 5 else ""
+        has_gps = not p["approx"] and p["lat"] is not None
+        best_i, best_rank = None, None
+        for i, ns in enumerate(ns_meta):
+            ens_norm = ns["ens_norm"]
+            # enseigne compatible : égale, contenue (« Galeries Lafayettes »/
+            # « Galeries Lafayette ») ou présente dans le nom du magasin
+            ens_ok = bool(ens_norm) and (
+                (p_ens and (p_ens in ens_norm or ens_norm in p_ens)) or ens_norm in p_nom
+            )
+            # Deux enseignes connues ET différentes ne sont jamais le même magasin,
+            # même porte à porte (le Monoprix du 5 rue Letort et le Marionnaud du
+            # 119 rue Ordener, à 40 m, s'échangeaient leurs adresses).
+            if ens_norm and p_ens and not ens_ok:
+                continue
+            dist = None
+            if has_gps and ns["lat"] is not None:
+                dist = _dist_m(p["lat"], p["lon"], ns["lat"], ns["lon"])
+            far = 10 ** 9
+            d_key = dist if dist is not None else far
+
+            # 0) même nom (sans accents/casse), avec ou sans l'enseigne devant
+            if p_nom in (ns["nom_norm"], f"{ens_norm} {ns['nom_norm']}".strip()):
+                if dist is not None and dist > 3000:
                     continue
-                p = points[idx]
-                # enseigne compatible : égale, contenue (« Galeries Lafayettes »/
-                # « Galeries Lafayette ») ou présente dans le nom du magasin
-                ens_ok = bool(ens_norm) and (
-                    (p_ens and (p_ens in ens_norm or ens_norm in p_ens))
-                    or ens_norm in p_nom
-                )
-                # Deux enseignes connues ET différentes ne sont jamais le même
-                # magasin, même porte à porte (vécu : le Monoprix du 5 rue Letort
-                # et le Marionnaud du 119 rue Ordener, à 40 m, s'échangeaient
-                # leurs adresses via la règle des 150 m).
-                if bool(ens_norm) and bool(p_ens) and not ens_ok:
-                    continue
-                dist = (None if p["approx"]
-                        else _dist_m(p["lat"], p["lon"], ns["lat"], ns["lon"]))
-                far = 10 ** 9   # pas de GPS exploitable : on ne départage pas par distance
-                # 1) même nom (sans accents/casse)
-                if p_nom == _norm_txt(ns["nom"]):
-                    rank = (0, dist if dist is not None else far, 0)
-                # 2) visite géolocalisée à < 150 m du magasin
-                elif dist is not None and dist < 150:
-                    rank = (1, dist, 0)
-                else:
-                    # 3) rapprochement par lieu : même CP, ou même nom de ville
-                    same_place = (p_cp and p_cp == ns_cp) or (p_city and ns_city and p_city == ns_city)
-                    if not same_place:
-                        continue
-                    if p_cp and p_cp == ns_cp:
-                        unique_here = cnt_cp.get((ens_norm, ns_cp), 0) == 1
-                    else:
-                        unique_here = cnt_city.get((ens_norm, ns_city), 0) == 1
-                    common = len(p_tokens & ns_tokens)
-                    if not ((ens_ok and (unique_here or common >= 1)) or common >= 2):
-                        continue
-                    rank = (2, -common, dist if dist is not None else far)
-                if best_rank is None or rank < best_rank:
-                    match_idx, best_rank = idx, rank
-            if match_idx is not None:
-                used.add(match_idx)
-                match = points[match_idx]
-                # Déjà visité/démarché : on enrichit la fiche et on recale le marqueur
-                # sur la position officielle du magasin (plus fiable que le GPS du commercial).
-                match["lat"], match["lon"], match["approx"] = ns["lat"], ns["lon"], False
-                match["code"], match["tel"] = ns["code"], ns["tel"]
-                match["adresse_reseau"] = ns["adresse"]
-                if ens and not match["enseigne"]:
-                    match["enseigne"] = ens
+                rank = (0, 0, d_key)
             else:
-                if ns.get("approx"):
-                    nb_approx += 1
-                points.append({
-                    "magasin": ns["nom"], "ville": ns["ville"], "enseigne": ens,
-                    "type": "reseau", "lat": ns["lat"], "lon": ns["lon"],
-                    "approx": bool(ns.get("approx")), "n": 0, "hist": [], "hist_all": [],
-                    "code": ns["code"], "tel": ns["tel"], "adresse_reseau": ns["adresse"],
-                })
+                if p_cp and ns["cp"]:
+                    same_place = p_cp == ns["cp"]
+                else:
+                    same_place = bool(p_city and ns["ns_city"] and p_city == ns["ns_city"])
+                near = dist is not None and dist < 150
+                if not (same_place or near):
+                    continue
+                if dist is not None and dist > 2000:
+                    continue      # le GPS de la visite dit clairement que ce n'est pas lui
+                # Numéros de rue différents (« 8 av. du Gal Leclerc » / « 52-54 av. du
+                # Gal Leclerc ») : jamais le même magasin.
+                if p_nums and ns["nums"] and not (p_nums & ns["nums"]):
+                    continue
+                c_nom = len(p_tokens & ns["tok_nom"])
+                c_rue = len(p_tokens & ns["tok_rue"])
+                # Le nom compte double ; retrouver la saisie telle quelle dans le nom
+                # ou la rue vaut +3 ; le même numéro de rue +2. Ainsi « St lazare »
+                # → Sephora Saint-Lazare (gare), « Cour du havre » → le même
+                # (1 cour du Havre), « 109 rue Saint-Lazare » → Passage du Havre.
+                score = 2 * c_nom + c_rue
+                if p_ph and (p_ph in ns["ph_nom"] or p_ph in ns["ph_rue"]):
+                    score += 3
+                if p_nums & ns["nums"]:
+                    score += 2
+                if score >= 2 or (score >= 1 and ens_ok):
+                    # 1) les MOTS du nom / de l'adresse priment sur le GPS : le
+                    #    téléphone du commercial n'est pas toujours devant la bonne porte.
+                    rank = (1, -score, d_key)
+                elif near and not p_tokens:
+                    # 2) visite géolocalisée à < 150 m, sans nom exploitable
+                    rank = (2, 0, dist)
+                elif near and ens_ok and not (c_nom or c_rue):
+                    # 3) nom saisi qui ne dit rien de ce magasin, mais on est devant
+                    rank = (3, 0, dist)
+                elif same_place and ens_ok and not p_tokens and not p_nums:
+                    # 4) seul magasin de l'enseigne dans ce CP / cette ville
+                    if p_cp and p_cp == ns["cp"]:
+                        unique_here = cnt_cp.get((ens_norm, ns["cp"]), 0) == 1
+                    else:
+                        unique_here = cnt_city.get((ens_norm, ns["ns_city"]), 0) == 1
+                    if not unique_here:
+                        continue
+                    rank = (4, 0, d_key)
+                else:
+                    continue
+            if best_rank is None or rank < best_rank:
+                best_i, best_rank = i, rank
+        if best_i is None:
+            unmatched.append(p)
+        else:
+            groups.setdefault(best_i, []).append(p)
 
-    return points, nb_approx, nb_sans_position
+    merged = []
+    nb_approx = 0
+    for i, ns in enumerate(ns_meta):
+        if i in groups:
+            merged.append(_merge_store_group(groups[i], base=ns))
+        else:
+            merged.append({
+                "magasin": ns["nom"], "ville": ns["ville"], "enseigne": ns["ens"],
+                "type": "reseau", "lat": ns["lat"], "lon": ns["lon"],
+                "approx": bool(ns.get("approx")), "n": 0, "hist": [], "hist_all": [],
+                "code": ns["code"], "tel": ns["tel"], "adresse_reseau": ns["adresse"],
+                "aliases": [(str(ns["nom"]).strip().lower(), str(ns["ville"]).strip().lower(),
+                             _norm_txt(ns["ens"]))],
+            })
+
+    # --- 3. Variantes hors réseau d'un même magasin --------------------------
+    # Même enseigne, même lieu, mêmes mots distinctifs (« Roquette » = « Marionnaud
+    # 50 rue de la Roquette »), sans numéros de rue contradictoires. On fusionne
+    # d'abord les paires les plus proches, et un groupe ne réunit jamais deux
+    # numéros différents : « Roquette » rejoint le 50 OU le 142, pas les deux.
+    parent = list(range(len(unmatched)))
+    nums_of = [set(_store_numbers(p["magasin"])) for p in unmatched]
+
+    def _find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    meta = []
+    for p in unmatched:
+        meta.append((
+            _norm_txt(p["enseigne"]),
+            frozenset(_store_words(p["magasin"]) - _tokens(p["enseigne"]) - _tokens(p["ville"]) - _STORE_STOP),
+            _cp_of(p["ville"]), _city_of(p["ville"]),
+            not p["approx"] and p["lat"] is not None,
+        ))
+    pairs = []
+    for a in range(len(unmatched)):
+        ea, ta, cpa, cia, ga = meta[a]
+        if not ea or not ta:
+            continue
+        for b in range(a + 1, len(unmatched)):
+            eb, tb, cpb, cib, gb = meta[b]
+            if ea != eb or ta != tb:
+                continue
+            if cpa and cpb:
+                same_place = cpa == cpb
+            else:
+                same_place = bool(cia and cib and cia == cib)
+            if not same_place:
+                continue
+            pa, pb = unmatched[a], unmatched[b]
+            dist = _dist_m(pa["lat"], pa["lon"], pb["lat"], pb["lon"]) if (ga and gb) else None
+            if dist is not None and dist > 1500:
+                continue
+            pairs.append((dist if dist is not None else 10 ** 6, a, b))
+    for _, a, b in sorted(pairs):
+        ra, rb = _find(a), _find(b)
+        if ra == rb:
+            continue
+        if nums_of[ra] and nums_of[rb] and not (nums_of[ra] & nums_of[rb]):
+            continue
+        parent[ra] = rb
+        nums_of[rb] = nums_of[rb] | nums_of[ra]
+    clusters = {}
+    for a, p in enumerate(unmatched):
+        clusters.setdefault(_find(a), []).append(p)
+    for members in clusters.values():
+        merged.append(members[0] if len(members) == 1 else _merge_store_group(members))
+
+    out = []
+    for s in merged:
+        if s.get("lat") is None:
+            nb_sans_position += 1
+            continue
+        if s.get("approx"):
+            nb_approx += 1
+        out.append(s)
+    return out, nb_approx, nb_sans_position
 
 
 # Gabarit HTML/JS de la carte (hors f-string : les accolades JS restent intactes).
@@ -3914,7 +4136,16 @@ def store_passages(magasin, ville):
     """Tous les passages d'un magasin : visites + démarchages, du + récent au + ancien.
 
     Renvoie une liste de (kind, row) — `kind` vaut « visite » ou « prospect ».
+    Inclut les passages saisis sous un autre nom mais rattachés au même magasin.
     """
+    aliases = set()
+    try:
+        key = store_key({"magasin": magasin, "ville": ville})
+        store = next((s for s in store_index() if store_key(s) == key), None)
+        if store:
+            aliases = {tuple(a) for a in store.get("aliases", [])}
+    except Exception:
+        aliases = set()
     rows = []
     for kind, loader in (("visite", load_visits), ("prospect", load_prospects)):
         try:
@@ -3923,12 +4154,21 @@ def store_passages(magasin, ville):
             continue
         if df.empty or "Magasin" not in df.columns:
             continue
-        mask = df["Magasin"].astype(str).str.strip().str.lower() == str(magasin).strip().lower()
-        if "Ville" in df.columns and str(ville or "").strip():
-            mask = mask & (df["Ville"].astype(str).str.strip().str.lower() == str(ville).strip().lower())
+        mags = df["Magasin"].astype(str).str.strip().str.lower()
+        if aliases and "Ville" in df.columns:
+            # Toutes les variantes de nom rattachées à ce magasin
+            villes = df["Ville"].astype(str).str.strip().str.lower()
+            ens = (df["Enseigne"].astype(str).str.strip().map(_norm_txt)
+                   if "Enseigne" in df.columns else pd.Series([""] * len(df), index=df.index))
+            mask = pd.Series([(m, v, e) in aliases for m, v, e in zip(mags, villes, ens)],
+                             index=df.index)
+        else:
+            mask = mags == str(magasin).strip().lower()
+            if "Ville" in df.columns and str(ville or "").strip():
+                mask = mask & (df["Ville"].astype(str).str.strip().str.lower() == str(ville).strip().lower())
         for _, r in df[mask].iterrows():
             rows.append((kind, r))
-    rows.sort(key=lambda x: (str(x[1].get("Date", "")), str(x[1].get("Heure", ""))), reverse=True)
+    rows.sort(key=lambda x: (_iso_date(x[1].get("Date", "")), str(x[1].get("Heure", ""))), reverse=True)
     return rows
 
 
@@ -4084,7 +4324,7 @@ def _travel_minutes(dist_m):
 def _days_since(date_str, today):
     """Nombre de jours depuis une date ISO ; None si la date est illisible."""
     try:
-        d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
+        d = datetime.strptime(_iso_date(date_str)[:10], "%Y-%m-%d").date()
     except Exception:
         return None
     return (today - d).days
@@ -4338,6 +4578,59 @@ def _date_longue(iso):
     return f"{JOURS_FR[d.weekday()]} {d.day} {MOIS_LONG_FR[d.month - 1]}"
 
 
+# Réglages de la tournée : mémorisés pour la session ET dans le navigateur.
+# (Streamlit efface l'état d'un widget dès qu'on quitte l'écran : sans ça, un
+# « ne pas reproposer avant 60 j » revenait à 21 j au retour sur les tournées.)
+TOUR_COOLDOWN_CHOIX = [7, 14, 21, 30, 45, 60, 75, 90]
+TOUR_PREFS_DEFAUT = {
+    "tour_jours": TOUR_JOURS_DEFAUT, "tour_visit_min": 15, "tour_h_debut": 10,
+    "tour_semaines": 2, "tour_h_fin": 18, "tour_h_pause": 13, "tour_pause_min": 60,
+    "tour_depts": None, "tour_cadence": TOUR_CADENCE_J, "tour_cooldown": TOUR_COOLDOWN_J,
+}
+TOUR_PREFS_LS_KEY = "mh_tour_prefs"
+
+
+def _tour_prefs_load():
+    """Réglages mémorisés (session, sinon navigateur), complétés par les défauts."""
+    prefs = st.session_state.get("_tour_prefs")
+    if prefs is None:
+        prefs = {}
+        try:
+            ls = st.session_state.get("_local_storage")
+            raw = ls.getItem(TOUR_PREFS_LS_KEY) if ls is not None else None
+            if isinstance(raw, str) and raw.strip():
+                raw = json.loads(raw)
+            if isinstance(raw, dict):
+                prefs = raw
+                st.session_state._tour_prefs = prefs
+        except Exception:
+            prefs = {}
+    out = dict(TOUR_PREFS_DEFAUT)
+    out.update({k: v for k, v in prefs.items() if k in TOUR_PREFS_DEFAUT and v is not None})
+    if out["tour_depts"] is None:
+        out["tour_depts"] = list(IDF_DEPTS)
+    # Valeurs hors bornes (anciennes versions) → ramenées dans les choix possibles
+    out["tour_jours"] = [j for j in out["tour_jours"] if j in TOUR_JOURS] or list(TOUR_JOURS_DEFAUT)
+    out["tour_depts"] = [d for d in out["tour_depts"] if d in IDF_DEPTS] or list(IDF_DEPTS)
+    if out["tour_cooldown"] not in TOUR_COOLDOWN_CHOIX:
+        out["tour_cooldown"] = min(TOUR_COOLDOWN_CHOIX, key=lambda c: abs(c - int(out["tour_cooldown"])))
+    return out
+
+
+def _tour_prefs_save(values):
+    """Mémorise les réglages s'ils ont changé (session + navigateur)."""
+    old = st.session_state.get("_tour_prefs") or {}
+    if all(old.get(k) == v for k, v in values.items()):
+        return
+    st.session_state._tour_prefs = dict(values)
+    try:
+        ls = st.session_state.get("_local_storage")
+        if ls is not None:
+            ls.setItem(TOUR_PREFS_LS_KEY, json.dumps(values), key="ls_set_tour_prefs")
+    except Exception:
+        pass
+
+
 def screen_tournees():
     """Écran des tournées recommandées."""
     st.markdown(
@@ -4352,44 +4645,53 @@ def screen_tournees():
         st.session_state.screen = "home"
         st.rerun()
 
+    prefs = _tour_prefs_load()
+    for k, v in prefs.items():
+        # (ré)initialise les widgets avec la valeur mémorisée
+        if k not in st.session_state:
+            st.session_state[k] = v
+
     with st.expander("⚙️ Réglages de la tournée", expanded=False):
         jours = st.multiselect(
             "Jours de terrain (2 par semaine recommandés)",
-            TOUR_JOURS, default=TOUR_JOURS_DEFAUT,
+            TOUR_JOURS,
             key="tour_jours",
         )
         col1, col2 = st.columns(2)
         with col1:
-            visit_min = st.slider("Durée d'une visite (min)", 10, 20,
-                                  15, key="tour_visit_min")
-            h_debut = st.number_input("Début de journée (h)", 7, 12,
-                                      10, key="tour_h_debut")
+            visit_min = st.slider("Durée d'une visite (min)", 10, 20, key="tour_visit_min")
+            h_debut = st.number_input("Début de journée (h)", 7, 12, key="tour_h_debut")
         with col2:
-            nb_semaines = st.slider("Semaines à planifier", 1, 4,
-                                    2, key="tour_semaines")
-            h_fin = st.number_input("Fin de journée (h)", 14, 21,
-                                    18, key="tour_h_fin")
+            nb_semaines = st.slider("Semaines à planifier", 1, 4, key="tour_semaines")
+            h_fin = st.number_input("Fin de journée (h)", 14, 21, key="tour_h_fin")
         col3, col4 = st.columns(2)
         with col3:
-            h_pause = st.number_input("Début de la pause déjeuner (h)", 11, 15,
-                                      13, key="tour_h_pause")
+            h_pause = st.number_input("Début de la pause déjeuner (h)", 11, 15, key="tour_h_pause")
         with col4:
-            duree_pause = st.slider("Durée de la pause (min)", 30, 90,
-                                    60, step=15, key="tour_pause_min")
+            duree_pause = st.slider("Durée de la pause (min)", 30, 90, step=15, key="tour_pause_min")
         depts = st.multiselect(
             "Départements",
             IDF_DEPTS,
-            default=IDF_DEPTS,
             format_func=lambda d: f"{d} · {DEPT_NAMES.get(d, '')}",
             key="tour_depts",
         )
         col5, col6 = st.columns(2)
         with col5:
             cadence = st.slider("Repasser dans un magasin tous les… (jours)", 30, 120,
-                                TOUR_CADENCE_J, step=15, key="tour_cadence")
+                                step=15, key="tour_cadence")
         with col6:
-            cooldown = st.slider("Ne pas reproposer avant… (jours)", 7, 60,
-                                 TOUR_COOLDOWN_J, step=7, key="tour_cooldown")
+            cooldown = st.select_slider("Ne pas reproposer avant… (jours)",
+                                        options=TOUR_COOLDOWN_CHOIX, key="tour_cooldown")
+
+    _tour_prefs_save({
+        "tour_jours": list(jours), "tour_visit_min": int(visit_min), "tour_h_debut": int(h_debut),
+        "tour_semaines": int(nb_semaines), "tour_h_fin": int(h_fin), "tour_h_pause": int(h_pause),
+        "tour_pause_min": int(duree_pause), "tour_depts": list(depts),
+        "tour_cadence": int(cadence), "tour_cooldown": int(cooldown),
+    })
+
+    st.caption(f"🔒 Un magasin vu il y a moins de {int(cooldown)} jours n'est pas reproposé "
+               f"(réglable ci-dessus, mémorisé sur cet appareil).")
 
     if not jours:
         st.warning("Choisis au moins un jour de terrain dans les réglages.")
@@ -4404,16 +4706,20 @@ def screen_tournees():
         st.rerun()
 
     today_iso = datetime.now().strftime("%Y-%m-%d")
-    fait_auj = set()   # magasins déjà visités aujourd'hui → cochés dans la tournée
     try:
-        df_v = load_visits()
-        stamp = len(df_v)
-        if not df_v.empty and "Date" in df_v.columns:
-            for _, r in df_v.iterrows():
-                if str(r.get("Date", "")).strip()[:10] >= today_iso:
-                    fait_auj.add(_tour_done_key(r.get("Magasin", ""), r.get("Ville", "")))
+        stamp = len(load_visits())
     except Exception:
         stamp = 0
+    # Magasins déjà vus aujourd'hui → cochés ✅ dans la tournée. On passe par
+    # l'index des magasins : une visite saisie sous un autre nom (« St Lazare »
+    # au lieu de « ST LAZARE ») coche quand même le bon magasin.
+    fait_auj = set()
+    try:
+        for s_ in store_index():
+            if any(str(h.get("date", ""))[:10] >= today_iso for h in (s_.get("hist_all") or [])):
+                fait_auj.add(store_key(s_))
+    except Exception:
+        pass
 
     with st.spinner("Construction des tournées…"):
         days, nb_cands = build_tour_plan(
@@ -4430,8 +4736,7 @@ def screen_tournees():
         return
 
     def _fait(stop):
-        s_ = stop["store"]
-        return _tour_done_key(s_.get("magasin", ""), s_.get("ville", "")) in fait_auj
+        return store_key(stop["store"]) in fait_auj
 
     total_stops = sum(1 for d in days for st_ in d["stops"] if not _fait(st_))
     col_a, col_b, col_c = st.columns(3)
