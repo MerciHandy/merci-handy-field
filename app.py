@@ -2537,7 +2537,10 @@ def build_map_points():
             lat, lon = _to_float(r.get("Latitude")), _to_float(r.get("Longitude"))
             if lat is not None and lon is not None:
                 s["lat"], s["lon"] = lat, lon
-            detail = str(r.get("Etat", "") if kind == "visite" else r.get("Statut", "")).strip()
+            if kind == "visite":
+                detail = etat_effectif(r.get("Etat", ""), r.get("Commentaire", ""))
+            else:
+                detail = str(r.get("Statut", "")).strip()
             s["hist"].append({
                 "id": str(r.get("ID", "")).strip(),
                 "date": date_iso,
@@ -3240,6 +3243,8 @@ def screen_admin():
     with tab_pros:
         manage_prospects()
     with tab_imp:
+        manage_misplaced_imports()
+        st.divider()
         manage_import()
     with tab2:
         manage_list("Enseignes", DEFAULT_ENSEIGNES)
@@ -3287,6 +3292,35 @@ def etat_color(etat):
 def is_problem_etat(etat):
     """Un état est un 'souci' s'il ne contient pas 'OK' (facing, rupture, PLV…)."""
     return "OK" not in etat
+
+
+ETAT_PAS_REF = "👻 Pas référencé"
+
+# Commentaires des visites importées (suivi de Vinita) qui disent qu'on n'est
+# plus référencé : l'import ne remplit pas la colonne Etat, l'info est restée
+# dans le texte (« NE REFERENCE PLUS MH », « PLUS DE NOCIBE », « pas sur les listings »…).
+_NOT_REF_RE = re.compile(
+    r"pas\s+r[ée]f|plus\s+(de\s+)?r[ée]f|ne\s+r[ée]f[ée]renc(?:e|ent)\s+plus|"
+    r"pas\s+de\s+produits\s+mh|plus\s+de\s+produits\s+mh|plus\s+de\s+noci|"
+    r"d[ée]r[ée]f[ée]renc|pas\s+sur\s+les\s+listings",
+    re.IGNORECASE,
+)
+
+
+def is_not_referenced(etat):
+    """True si l'état saisi dit qu'on n'est pas (ou plus) référencé dans ce magasin."""
+    return "pas referenc" in _norm_txt(etat)
+
+
+def etat_effectif(etat, commentaire=""):
+    """État d'une visite, complété pour les lignes importées sans état :
+    si le commentaire dit « plus référencé », on le traite comme tel."""
+    etat = str(etat or "").strip()
+    if etat:
+        return etat
+    if _NOT_REF_RE.search(str(commentaire or "")):
+        return ETAT_PAS_REF
+    return ""
 
 
 def render_pct_rows(rows):
@@ -4370,6 +4404,11 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
             if h.get("kind") == "visite" and not last_v:
                 last_v, last_etat = h["date"], str(h.get("detail", ""))
 
+        # Plus référencé lors du dernier passage client : ce n'est pas une
+        # tournée client. Le magasin part dans la liste « À reconquérir ».
+        if last_v and is_not_referenced(last_etat):
+            continue
+
         depuis = _days_since(last_any, today)
         if depuis is not None and depuis < cooldown:
             continue
@@ -4396,6 +4435,39 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
 
     cands.sort(key=lambda c: -c["score"])
     return cands
+
+
+TOUR_RECONQUETE_J = 90    # rythme de repassage dans un magasin où l'on n'est plus référencé
+
+
+def reconquest_candidates(depts, today=None):
+    """Magasins où le DERNIER passage client dit « Pas référencé ».
+
+    Ils sortent des tournées clients mais restent visibles dans une liste
+    « À reconquérir », à revoir en démarchage environ tous les 90 jours.
+    Triés du passage le plus ancien au plus récent.
+    """
+    today = today or datetime.now().date()
+    out = []
+    for s in store_index():
+        if depts and s.get("dept") not in depts:
+            continue
+        last_v, last_etat, last_any = "", "", ""
+        for h in (s.get("hist_all") or []):
+            if not h.get("date"):
+                continue
+            if not last_any:
+                last_any = h["date"]
+            if h.get("kind") == "visite" and not last_v:
+                last_v, last_etat = h["date"], str(h.get("detail", ""))
+        if not (last_v and is_not_referenced(last_etat)):
+            continue
+        c = dict(s)
+        c["last_visit"] = last_v
+        c["depuis"] = _days_since(last_any, today)
+        out.append(c)
+    out.sort(key=lambda c: -(c["depuis"] if c["depuis"] is not None else 0))
+    return out
 
 
 def _zone_key(lat, lon, cell_m=TOUR_ZONE_M):
@@ -4631,6 +4703,61 @@ def _tour_prefs_save(values):
         pass
 
 
+def render_reconquest(depts):
+    """Liste repliée des magasins où l'on n'est plus référencé (hors tournées)."""
+    try:
+        lst = reconquest_candidates(list(depts))
+    except Exception:
+        lst = []
+    if not lst:
+        return
+    a_revoir = sum(1 for c in lst if (c["depuis"] or 0) >= TOUR_RECONQUETE_J)
+    titre = f"🔁 À reconquérir — {len(lst)} magasin(s) non référencé(s), hors tournées"
+    if a_revoir:
+        titre += f" · {a_revoir} à revoir"
+    with st.expander(titre, expanded=False):
+        st.caption(
+            "Ces magasins ne sont plus dans tes tournées : au dernier passage, on n'y était "
+            f"pas référencés. À revoir en démarchage environ tous les {TOUR_RECONQUETE_J} jours, "
+            "surtout s'il y a un contact ou une ouverture. Une visite « Linéaire OK » les "
+            "remet automatiquement dans les tournées."
+        )
+        for i, c in enumerate(lst):
+            depuis = c["depuis"]
+            revoir = depuis is not None and depuis >= TOUR_RECONQUETE_J
+            badge = "🟣 À revoir" if revoir else f"Vu il y a {depuis} j" if depuis is not None else ""
+            lieu = c.get("adresse_reseau", "") or c.get("ville", "")
+            st.markdown(
+                f'<div class="visit-card" style="padding:10px 14px;">'
+                f'{logo_img(c.get("enseigne", ""), height=14)}'
+                f'<strong style="font-size:14px;">{html.escape(str(c.get("magasin", "")))}</strong><br>'
+                f'<span style="font-size:12px;color:{TEXT_SOFT};">📍 {html.escape(str(lieu))}</span><br>'
+                f'<span style="font-size:11px;color:{TEXT_SOFT};">👻 Pas référencé au passage du '
+                f'{fr_date(c["last_visit"])} · {html.escape(badge)}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            col_f, col_p = st.columns(2)
+            with col_f:
+                if st.button("Fiche", key=f"recq_f_{i}", use_container_width=True):
+                    open_store(c, back="tournees")
+                    st.rerun()
+            with col_p:
+                if st.button("🔍 Démarchage", key=f"recq_p_{i}", use_container_width=True):
+                    for k in ["geo_lat", "geo_lon", "geo_address", "geo_city", "geo_shops",
+                              "geo_selected", "prospect_ville_query", "prospect_ville_pick",
+                              "prospect_ville_geo", "prospect_ville_box", "prospect_ens_pick"]:
+                        st.session_state.pop(k, None)
+                    st.session_state.map_prefill = {
+                        "magasin": c.get("magasin", ""),
+                        "ville": c.get("ville", ""),
+                        "enseigne": c.get("enseigne", ""),
+                        "back": "tournees",
+                    }
+                    st.session_state.screen = "new_prospect"
+                    st.rerun()
+
+
 def screen_tournees():
     """Écran des tournées recommandées."""
     st.markdown(
@@ -4728,6 +4855,8 @@ def screen_tournees():
             int(cadence), int(cooldown), stamp, today_iso,
         )
 
+    render_reconquest(depts)
+
     if not days:
         st.info(
             "Aucune tournée à proposer : tous les magasins des départements choisis ont "
@@ -4749,7 +4878,8 @@ def screen_tournees():
 
     st.caption(
         f"Priorité aux magasins jamais visités, puis à ceux vus il y a plus de {cadence} jours "
-        f"ou dont le dernier passage signalait un souci. La tournée du jour reste figée : "
+        f"ou dont le dernier passage signalait un souci. Les magasins où l'on n'est plus "
+        f"référencé n'y figurent pas (voir « À reconquérir »). La tournée du jour reste figée : "
         f"une visite saisie coche le magasin ✅, qui sort du plan à partir du lendemain."
     )
     st.write("")
@@ -4899,12 +5029,44 @@ def _split_adresse_import(adresse):
     return voie, m.group(1), ville
 
 
-def geocode_import_batch(rows):
-    """Comme geocode_addresses_batch, mais renvoie AUSSI la commune et le CP
-    trouvés par la BAN — c'est ce qui remplit correctement la colonne Ville.
+IMPORT_IDF_PREFIXES = ("75", "77", "78", "91", "92", "93", "94", "95")
 
+
+def _cp_idf(cp):
+    return str(cp or "")[:2] in IMPORT_IDF_PREFIXES and len(str(cp or "")) == 5
+
+
+def geocode_import_batch(rows):
+    """Géocode les adresses importées, sans jamais les envoyer hors d'IDF par erreur.
+
+    Les suivis terrain sont franciliens, mais beaucoup d'adresses n'ont ni CP ni
+    ville (« Gare de Lyon », « 30 av. d'Italie ») : la BAN les plaçait alors à
+    Lyon, Toulouse, Bordeaux… (46 lignes de l'import de Vinita). Règle :
+    - résultat en IDF → accepté ;
+    - hors IDF → accepté seulement si l'adresse source donnait ce département ;
+    - sinon on réessaie en ajoutant « Paris », et on n'accepte qu'un résultat en IDF.
     rows : tuple de (id, adresse, cp, ville) → {id: (lat, lon, ville, cp)}.
     """
+    src_cp = {str(r[0]): str(r[2] or "") for r in rows}
+    first = _ban_import_batch(rows)
+    out, retry = {}, []
+    for rid, adresse, cp, city in rows:
+        hit = first.get(str(rid))
+        if hit and (_cp_idf(hit[3]) or (cp and str(hit[3])[:2] == str(cp)[:2])):
+            out[str(rid)] = hit
+        elif not cp or _cp_idf(cp):
+            retry.append((rid, adresse, cp, "Paris" if not cp or str(cp).startswith("75") else city))
+    if retry:
+        second = _ban_import_batch(tuple(retry), min_score=0.5)
+        for rid, _a, cp, _c in retry:
+            hit = second.get(str(rid))
+            if hit and _cp_idf(hit[3]) and (not src_cp.get(str(rid)) or str(hit[3])[:2] == src_cp[str(rid)][:2]):
+                out[str(rid)] = hit
+    return out
+
+
+def _ban_import_batch(rows, min_score=0.3):
+    """Appel brut au géocodeur CSV de la BAN (un seul appel pour tout le lot)."""
     import csv as _csv
     buf = io.StringIO()
     w = _csv.writer(buf)
@@ -4930,7 +5092,7 @@ def geocode_import_batch(rows):
                 score = float(r.get("result_score") or 0)
             except Exception:
                 continue
-            if score >= 0.3:
+            if score >= min_score:
                 out[str(r.get("id", ""))] = (
                     lat, lon,
                     _clean_cell(r.get("result_city", "")),
@@ -5120,6 +5282,119 @@ def append_import_rows(prepared):
         sheet.append_rows(rows[i:i + 200], value_input_option="USER_ENTERED")
     st.cache_data.clear()
     return len(nouvelles), len(prepared) - len(nouvelles)
+
+
+_IDF_BBOX = (48.10, 49.25, 1.40, 3.60)   # lat min/max, lon min/max
+
+
+def find_misplaced_imports():
+    """Visites importées (ID « IMP- ») placées hors Île-de-France par le géocodage.
+
+    On ne touche pas aux lignes dont l'adresse d'origine donne elle-même un CP hors
+    IDF : celles-là sont vraiment ailleurs. Renvoie (feuille, en-tête, lignes) où
+    lignes = [(n° de ligne Sheet, dict de la ligne)].
+    """
+    sheet = get_visits_sheet()
+    values = sheet.get_all_values()
+    if not values:
+        return sheet, [], []
+    header = values[0]
+    out = []
+    for i, row in enumerate(values[1:], start=2):
+        r = {header[j]: (row[j] if j < len(row) else "") for j in range(len(header))}
+        if not str(r.get("ID", "")).startswith("IMP-"):
+            continue
+        _voie, cp_src, _v = _split_adresse_import(r.get("Adresse_complete", ""))
+        if cp_src and not _cp_idf(cp_src):
+            continue
+        lat, lon = _to_float(r.get("Latitude")), _to_float(r.get("Longitude"))
+        cp_ville = _cp_of(r.get("Ville", ""))
+        hors_idf = False
+        if lat is not None and lon is not None:
+            la0, la1, lo0, lo1 = _IDF_BBOX
+            hors_idf = not (la0 <= lat <= la1 and lo0 <= lon <= lo1)
+        if cp_ville and not _cp_idf(cp_ville):
+            hors_idf = True
+        if hors_idf:
+            out.append((i, r))
+    return sheet, header, out
+
+
+def fix_misplaced_imports():
+    """Re-géocode les visites importées hors IDF et corrige Ville / Latitude / Longitude.
+
+    Si aucune adresse francilienne fiable n'est trouvée, on efface la position
+    (mieux vaut « sans position » que Toulouse) et on garde « Paris » si le CP
+    d'origine est parisien. Renvoie (nb corrigées, nb sans position).
+    """
+    from gspread.utils import rowcol_to_a1
+    sheet, header, rows = find_misplaced_imports()
+    if not rows:
+        return 0, 0
+    req = []
+    for i, r in rows:
+        _voie, cp, ville_txt = _split_adresse_import(r.get("Adresse_complete", ""))
+        req.append((r["ID"], r.get("Adresse_complete", "") or r.get("Magasin", ""), cp, ville_txt))
+    found = geocode_import_batch(tuple(req))
+    col = {name: header.index(name) + 1 for name in ("Ville", "Latitude", "Longitude")}
+    updates, ok, vides = [], 0, 0
+    for (i, r), (_rid, _adr, cp, ville_txt) in zip(rows, req):
+        hit = found.get(r["ID"])
+        if hit:
+            lat, lon, ville_ban, cp_ban = hit
+            ville = f"{ville_ban.title()} ({cp_ban})" if cp_ban else ville_ban.title()
+            vals = {"Ville": ville, "Latitude": f"{lat:.6f}", "Longitude": f"{lon:.6f}"}
+            ok += 1
+        else:
+            ville = ""
+            if cp.startswith("75"):
+                ville = f"Paris ({cp})"
+            elif cp:
+                ville = f"{ville_txt.title()} ({cp})" if ville_txt else cp
+            vals = {"Ville": ville, "Latitude": "", "Longitude": ""}
+            vides += 1
+        for name, v in vals.items():
+            updates.append({"range": rowcol_to_a1(i, col[name]), "values": [[v]]})
+    for k in range(0, len(updates), 300):
+        sheet.batch_update(updates[k:k + 300], value_input_option="USER_ENTERED")
+    st.cache_data.clear()
+    return ok, vides
+
+
+def manage_misplaced_imports():
+    """Bloc admin : détecter puis corriger les visites importées géocodées hors IDF."""
+    st.markdown("### 📍 Adresses importées mal placées")
+    st.caption(
+        "Certaines visites importées ont été placées hors Île-de-France (Lyon, Toulouse, "
+        "Bordeaux…) parce que l'adresse d'origine n'avait ni code postal ni ville. "
+        "Ce bouton les re-géolocalise en restant en Île-de-France."
+    )
+    if st.button("🔎 Rechercher les adresses mal placées", use_container_width=True, key="misp_scan"):
+        try:
+            _s, _h, rows = find_misplaced_imports()
+            st.session_state.misp_rows = [
+                {"Ligne": i, "Date": r.get("Date", ""), "Magasin": r.get("Magasin", ""),
+                 "Ville actuelle": r.get("Ville", ""), "Adresse d'origine": r.get("Adresse_complete", "")}
+                for i, r in rows
+            ]
+        except Exception as e:
+            st.error(f"Lecture impossible : {e}")
+    rows = st.session_state.get("misp_rows")
+    if rows is None:
+        return
+    if not rows:
+        st.success("Aucune visite importée hors Île-de-France. 🎉")
+        return
+    st.markdown(f"**{len(rows)}** visite(s) importée(s) placée(s) hors Île-de-France :")
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, height=260)
+    if st.button(f"✅ Corriger les {len(rows)} adresses", type="primary",
+                 use_container_width=True, key="misp_fix"):
+        with st.spinner("Géolocalisation en Île-de-France…"):
+            ok, vides = fix_misplaced_imports()
+        store_index.clear()
+        build_tour_plan.clear()
+        st.session_state.misp_rows = None
+        st.success(f"{ok} adresse(s) recalée(s) en Île-de-France, {vides} sans position fiable (position effacée).")
 
 
 def manage_import():
