@@ -3915,9 +3915,9 @@ DN_FILE = "marionnaud_dn.csv"
 DN_STATUT = {
     "actif":      ("🟢", "#2D9D6F", "Vend Merci Handy"),
     "ralenti":    ("🟠", "#C68B00", "Pas de vente le dernier mois"),
-    "silencieux": ("🔇", "#C0392B", "Aucune vente sur 3 mois"),
+    "silencieux": ("🔇", "#C0392B", "Aucune vente sur 3 mois · hors tournées"),
 }
-DN_BONUS_TOUR = {"silencieux": 20.0, "ralenti": 8.0}
+DN_HORS_TOURNEE = ("silencieux",)   # 0 vente sur 3 mois = exclu des tournées (référencement décidé par le siège)
 MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 
 
@@ -3974,7 +3974,7 @@ def dn_lines(dn):
     elif dn.get("statut") == "ralenti":
         vente = f'{lib} ({mois}) · dernière vente {_mois_fr(dn.get("derniere_vente"))} · {dn["ca_3m"]:.0f} € sur 3 mois'
     else:
-        vente = f'{lib} (jusqu\'à {mois}) — rupture ou mauvais emplacement à vérifier'
+        vente = f'{lib} (jusqu\'à {mois}) — référencement à voir avec le siège Marionnaud'
     return [
         f'<span style="font-size:12px;color:{TEXT_SOFT};">🗺️ {html.escape(dn_zone_label(dn))}</span>',
         f'<span style="font-size:12px;font-weight:700;color:{col};">{ico} {html.escape(vente)}</span>',
@@ -4483,6 +4483,12 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
             if h.get("kind") == "visite" and not last_v:
                 last_v, last_etat = h["date"], str(h.get("detail", ""))
 
+        # Marionnaud sans aucune vente sur 3 mois : chez Marionnaud
+        # c'est le siège qui référence magasin par magasin, un passage terrain n'y
+        # change rien (décision Louis 14/10/2026). Le magasin sort des tournées.
+        if (s.get("dn") or {}).get("statut") in DN_HORS_TOURNEE:
+            continue
+
         # Plus référencé lors du dernier passage client : ce n'est pas une
         # tournée client. Le magasin part dans la liste « À reconquérir ».
         if last_v and is_not_referenced(last_etat):
@@ -4503,12 +4509,6 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
             if last_etat and is_problem_etat(last_etat):
                 score += 25.0
                 motif += " · souci signalé"
-        dn = s.get("dn")
-        if dn and dn.get("statut") in DN_BONUS_TOUR:
-            # Référencé mais ne vend pas (sell-out Marionnaud) : rupture, mauvais
-            # emplacement ou produit absent du linéaire — une visite y change tout.
-            score += DN_BONUS_TOUR[dn["statut"]]
-            motif += " · 🔇 0 vente 3 mois" if dn["statut"] == "silencieux" else " · 🟠 pas de vente le dernier mois"
         if s.get("approx"):
             score -= 12.0     # position approximative : itinéraire moins fiable
 

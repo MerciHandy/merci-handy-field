@@ -213,7 +213,9 @@ Pour désactiver temporairement : supprime juste la ligne `slack_webhook_url` de
 
 - **Fiche magasin + recherche** : zone · RRV, et 🟢 vend / 🟠 pas de vente le dernier mois / 🔇 aucune vente sur 3 mois.
   La recherche trouve un magasin par le nom de la RRV ou « zone 02 ».
-- **Tournées** : bonus de priorité pour les magasins qui ne vendent pas (+20 si 🔇, +8 si 🟠). Le motif l'indique.
+- **Tournées** : les magasins 🔇 (0 vente sur 3 mois) sont **exclus** des tournées (14/10/2026) ; les 🟠
+  (un mois sans vente) y restent, un trou d'un mois étant fréquent vu les petits volumes. Chez Marionnaud c'est le siège qui
+  référence magasin par magasin : un passage terrain n'y change rien. Ils restent visibles dans la recherche et sur la carte.
 - **Mise à jour mensuelle** : le fichier est régénéré depuis le projet SELL IN X SELL OUT
   (`sources/export_field_marionnaud.py`) à chaque mise à jour Marionnaud, puis uploadé ici.
   Si le fichier est absent, l'app fonctionne comme avant.
