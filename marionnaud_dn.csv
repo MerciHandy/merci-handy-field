@@ -1,0 +1,370 @@
+code;nom;zone;rrv;mois_donnees;ca_mois;ca_3m;derniere_vente;statut
+3016;FBG DU TEMPLE;01.Paris;Faiza Belkacem;2026-09;11.7;56.86;2026-09;actif
+4160;FBG MONTMARTRE;01.Paris;Faiza Belkacem;2026-09;25.57;72.52;2026-09;actif
+3134;FBG ST ANTOINE;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+4150;FLANDRE 96;01.Paris;Faiza Belkacem;2026-09;27.03;42.78;2026-09;actif
+4192;FORUM DES HALLES 2;01.Paris;Faiza Belkacem;2026-09;7;88.6;2026-09;actif
+4171;LEPIC;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+3018;LEVIS 14;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+4133;LEVIS 60;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+3011;MARTYRS;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+3218;NATION CHARONNE;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+4166;NATION COURS VINCEN;01.Paris;Faiza Belkacem;2026-09;64.72;176.69;2026-09;actif
+3106;ORDENER;01.Paris;Faiza Belkacem;2026-09;0;78.14;2026-07;ralenti
+4164;PYRENEES 196;01.Paris;Faiza Belkacem;2026-09;0;32.45;2026-08;ralenti
+4163;PYRENEES 255;01.Paris;Faiza Belkacem;2026-09;17.2;64.82;2026-09;actif
+4146;REPUBLIQUE LENOIR;01.Paris;Faiza Belkacem;2026-09;11.7;40.83;2026-09;actif
+4145;ROQUETTE 50;01.Paris;Faiza Belkacem;2026-09;23.52;42.12;2026-09;actif
+3017;SECRETAN 25;01.Paris;Faiza Belkacem;2026-09;40.19;67.66;2026-09;actif
+3021;ST LAZARE;01.Paris;Faiza Belkacem;2026-09;12.95;56.03;2026-09;actif
+4144;ST OUEN 124;01.Paris;Faiza Belkacem;2026-09;14.05;35.49;2026-09;actif
+4161;TEMPLE 180;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+4118;TERNES 2 4;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+4114;TERNES 55;01.Paris;Faiza Belkacem;2026-09;0;41.17;2026-07;ralenti
+3007;TRONCHET;01.Paris;Faiza Belkacem;2026-09;0;0;;silencieux
+4174;25 AOUT PARIS;02.Paris;Sarah Navarro;2026-09;9.79;44.84;2026-09;actif
+4101;ALESIA 70;02.Paris;Sarah Navarro;2026-09;56.53;108.73;2026-09;actif
+3015;AUTEUIL;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+3013;BELLES FEUILLES;02.Paris;Sarah Navarro;2026-09;11.8;11.8;2026-09;actif
+4104;COMMERCE;02.Paris;Sarah Navarro;2026-09;0;15.9;2026-08;ralenti
+4148;CONVENTION 203;02.Paris;Sarah Navarro;2026-09;0;115.35;2026-08;ralenti
+4106;ECOLE MILITAIRE;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+4109;GOBELINS;02.Paris;Sarah Navarro;2026-09;34.71;115.75;2026-09;actif
+3146;ITALIE II 2;02.Paris;Sarah Navarro;2026-09;42.34;85.55;2026-09;actif
+4117;LECOURBE;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+3103;MAINE;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+4108;MAUBERT;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+4116;MOUFFETARD;02.Paris;Sarah Navarro;2026-09;13.8;67.63;2026-09;actif
+3006;PARIS CROIX ROUGE;02.Paris;Sarah Navarro;2026-09;17.2;17.2;2026-09;actif
+3141;PARIS MASSENA;02.Paris;Sarah Navarro;2026-09;4.69;69.6;2026-09;actif
+4140;PARIS VERSAILLES;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+4125;PARIS VICTOR HUGO;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+4135;PASSY;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+4107;RENNES PARIS;02.Paris;Sarah Navarro;2026-09;0;30.41;2026-07;ralenti
+4152;ST CHARLES 103;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+3010;ST DOMINIQUE;02.Paris;Sarah Navarro;2026-09;0;14.44;2026-07;ralenti
+3009;VIEUX COLOMBIER;02.Paris;Sarah Navarro;2026-09;0;0;;silencieux
+3140;BOULOGNE BILLANCOURT;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+4308;CONFLANS BERTEAUX;03.Ile de France;Sabine Thouseau;2026-09;2.31;79.05;2026-09;actif
+3129;COURBEVOIE;03.Ile de France;Sabine Thouseau;2026-09;3.5;33.93;2026-09;actif
+3211;ERAGNY;03.Ile de France;Sabine Thouseau;2026-09;8.16;128.73;2026-09;actif
+3020;FLINS;03.Ile de France;Sabine Thouseau;2026-09;11.7;121.78;2026-09;actif
+4317;GARCHES;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+4306;HOUILLES;03.Ile de France;Sabine Thouseau;2026-09;0;0;2026-06;silencieux
+4111;LEVALLOIS CARNOT;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+4321;MANTES LA JOLIE RN54;03.Ile de France;Sabine Thouseau;2026-09;0;71.74;2026-08;ralenti
+4302;M_LAFFITTE LONGUEIL;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+4147;NEUILLY CDG 56;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+3135;NEUILLY HUISSIERS;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+4323;OSNY;03.Ile de France;Sabine Thouseau;2026-09;18.4;41.16;2026-09;actif
+4311;POISSY;03.Ile de France;Sabine Thouseau;2026-09;0;1.8;2026-07;ralenti
+4158;PUTEAUX LES 4 TEMPS;03.Ile de France;Sabine Thouseau;2026-09;58.29;204.91;2026-09;actif
+4314;ST GERMAIN AU PAIN;03.Ile de France;Sabine Thouseau;2026-09;0;0;2026-05;silencieux
+4110;ST GERMAIN POISSY;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+4193;VELIZY 2 NEW;03.Ile de France;Sabine Thouseau;2026-09;25.91;116.95;2026-09;actif
+4310;VERNOUILLET;03.Ile de France;Sabine Thouseau;2026-09;18.03;78.27;2026-09;actif
+4315;VERSAILLES MONTREUIL;03.Ile de France;Sabine Thouseau;2026-09;0;0;;silencieux
+4316;VERSAILLES PAROISSE;03.Ile de France;Sabine Thouseau;2026-09;0;12.24;2026-07;ralenti
+4142;ASNIERES BOKANOWSKI;04.Ile de France;Bintou Baradji;2026-09;0;0;;silencieux
+4122;ASNIERES BOURGUIGNON;04.Ile de France;Bintou Baradji;2026-09;0;21.63;2026-08;ralenti
+4180;AULNAY BONDY;04.Ile de France;Bintou Baradji;2026-09;8.28;30.58;2026-09;actif
+3019;AULNAY PARINOR;04.Ile de France;Bintou Baradji;2026-09;17.7;19.97;2026-09;actif
+3126;BAGNOLET;04.Ile de France;Bintou Baradji;2026-09;20.24;116.84;2026-09;actif
+4186;BEAU SEVRAN;04.Ile de France;Bintou Baradji;2026-09;93.71;265.13;2026-09;actif
+4185;CHAMPS SUR MARNE;04.Ile de France;Bintou Baradji;2026-09;0;0;;silencieux
+3125;CHELLES;04.Ile de France;Bintou Baradji;2026-09;14.04;90.18;2026-09;actif
+1319;CLAYE SOUILLY 2;04.Ile de France;Bintou Baradji;2026-09;11.7;31.75;2026-09;actif
+3107;CLICHY;04.Ile de France;Bintou Baradji;2026-09;0;0;2026-06;silencieux
+4194;DRANCY NEW;04.Ile de France;Bintou Baradji;2026-09;20.49;74.13;2026-09;actif
+3026;ENGHIEN;04.Ile de France;Bintou Baradji;2026-09;0;0;;silencieux
+3112;FONTENAY SOUS BOIS;04.Ile de France;Bintou Baradji;2026-09;0;6.13;2026-08;ralenti
+3136;LES LILAS PARIS 123;04.Ile de France;Bintou Baradji;2026-09;4.72;127.22;2026-09;actif
+3032;MONTREUIL GD ANGLE;04.Ile de France;Bintou Baradji;2026-09;0;38.02;2026-08;ralenti
+3118;NOISY BAS;04.Ile de France;Bintou Baradji;2026-09;11.4;68.12;2026-09;actif
+4173;PANTIN VERPANTIN;04.Ile de France;Bintou Baradji;2026-09;7.78;75.99;2026-09;actif
+3127;ROSNY 2 BAS;04.Ile de France;Bintou Baradji;2026-09;0;181.53;2026-08;ralenti
+3031;SARCELLES SS PREFECT;04.Ile de France;Bintou Baradji;2026-09;0;58.55;2026-08;ralenti
+4188;VILLENEUVE LA GARENN;04.Ile de France;Bintou Baradji;2026-09;7.72;95.4;2026-09;actif
+3205;VINCENNES;04.Ile de France;Bintou Baradji;2026-09;0;18.24;2026-07;ralenti
+3406;ANTONY;05.Ile de France;Sundos Alioui;2026-09;2.38;54.92;2026-09;actif
+3421;BOURG LA REINE 3;05.Ile de France;Sundos Alioui;2026-09;0;0;;silencieux
+4121;CARRE SENART;05.Ile de France;Sundos Alioui;2026-09;39.18;130.24;2026-09;actif
+4155;CRETEIL;05.Ile de France;Sundos Alioui;2026-09;72.9;224.53;2026-09;actif
+3412;EPINAY;05.Ile de France;Sundos Alioui;2026-09;0;0;;silencieux
+3206;ETAMPES;05.Ile de France;Sundos Alioui;2026-09;0;17;2026-07;ralenti
+3147;EVRY 2;05.Ile de France;Sundos Alioui;2026-09;26.32;177.74;2026-09;actif
+3417;FONTAINEBLEAU;05.Ile de France;Sundos Alioui;2026-09;0;0;;silencieux
+3411;FONTENAY AUX ROSES;05.Ile de France;Sundos Alioui;2026-09;75.16;153.43;2026-09;actif
+3131;ISSY LECLERC;05.Ile de France;Sundos Alioui;2026-09;0;0;;silencieux
+4178;JOINVILLE GALLIENI;05.Ile de France;Sundos Alioui;2026-09;17.95;65.66;2026-09;actif
+3416;LA VILLE DU BOIS;05.Ile de France;Sundos Alioui;2026-09;42.47;129.69;2026-09;actif
+3420;LES ULIS;05.Ile de France;Sundos Alioui;2026-09;14;36.02;2026-09;actif
+3415;MASSY CORA;05.Ile de France;Sundos Alioui;2026-09;4.01;133.7;2026-09;actif
+3208;MELUN;05.Ile de France;Sundos Alioui;2026-09;7.78;168.77;2026-09;actif
+3403;SCEAUX;05.Ile de France;Sundos Alioui;2026-09;0;0;;silencieux
+4154;THIAIS BELLE EPINE;05.Ile de France;Sundos Alioui;2026-09;24.92;117.49;2026-09;actif
+3404;VERRIERES;05.Ile de France;Sundos Alioui;2026-09;70.93;117.81;2026-09;actif
+3124;VILLABE;05.Ile de France;Sundos Alioui;2026-09;7;90.39;2026-09;actif
+3408;VILLEBON;05.Ile de France;Sundos Alioui;2026-09;48.27;55.61;2026-09;actif
+2031;BREST JAURES;06.Nord Ouest;Pauline Gourlaouen;2026-09;17.7;46.17;2026-09;actif
+2015;BREST PLYMOUTH;06.Nord Ouest;Pauline Gourlaouen;2026-09;26.56;121.0;2026-09;actif
+2025;CARHAIX MARTYRS;06.Nord Ouest;Pauline Gourlaouen;2026-09;37.04;118.54;2026-09;actif
+4703;CHOLET;06.Nord Ouest;Pauline Gourlaouen;2026-09;11.7;25.29;2026-09;actif
+2006;CONCARNEAU;06.Nord Ouest;Pauline Gourlaouen;2026-09;2.18;22.97;2026-09;actif
+2008;GUINGAMP;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;38.71;2026-08;ralenti
+4708;LA ROCHE SUR YON;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;24.01;2026-07;ralenti
+2013;LANNION GEANT;06.Nord Ouest;Pauline Gourlaouen;2026-09;31.9;137.83;2026-09;actif
+2012;LANNION ST MALO;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;20.55;2026-08;ralenti
+4705;LES SABLES;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;0;;silencieux
+2017;LORIENT FERRY;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;24.81;2026-07;ralenti
+2011;MORLAIX;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;37.21;2026-07;ralenti
+2022;NANTES CARREFOUR;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;22.36;2026-08;ralenti
+3225;NANTES CASARD;06.Nord Ouest;Pauline Gourlaouen;2026-09;21.15;43.9;2026-09;actif
+2014;PERROS GUIREC;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;0;;silencieux
+2027;QUIMPER CORNOUAILLES;06.Nord Ouest;Pauline Gourlaouen;2026-09;23.54;101.6;2026-09;actif
+2029;ST BRIEUC 2;06.Nord Ouest;Pauline Gourlaouen;2026-09;15.34;61.34;2026-09;actif
+2021;ST HERBLAIN;06.Nord Ouest;Pauline Gourlaouen;2026-09;0;47.4;2026-08;ralenti
+2028;VANNES 2;06.Nord Ouest;Pauline Gourlaouen;2026-09;3.5;151.21;2026-09;actif
+4711;ANGERS ATOLL;07.Centre;Sarah Guediri;2026-09;37.78;69.41;2026-09;actif
+4418;BOURGES AVARICUM;07.Centre;Sarah Guediri;2026-09;0;38.29;2026-08;ralenti
+2528;CHATEAUROUX 2;07.Centre;Sarah Guediri;2026-09;15.2;103.77;2026-09;actif
+2517;CHATELLERAULT LECLER;07.Centre;Sarah Guediri;2026-09;40.21;67.31;2026-09;actif
+2002;FOUGERES;07.Centre;Sarah Guediri;2026-09;0;29.67;2026-07;ralenti
+2516;GIEN;07.Centre;Sarah Guediri;2026-09;0;10.33;2026-08;ralenti
+2512;LA FLECHE;07.Centre;Sarah Guediri;2026-09;13.26;49.01;2026-09;actif
+2032;LAVAL;07.Centre;Sarah Guediri;2026-09;5.84;28.87;2026-09;actif
+2608;LE MANS;07.Centre;Sarah Guediri;2026-09;29.36;56.25;2026-09;actif
+2506;LOCHES;07.Centre;Sarah Guediri;2026-09;14.5;56.29;2026-09;actif
+4417;NEVERS MITTERRAND;07.Centre;Sarah Guediri;2026-09;15.62;37.7;2026-09;actif
+4712;NIORT RICARD;07.Centre;Sarah Guediri;2026-09;11.8;39.99;2026-09;actif
+2519;ORLEANS BANNIER;07.Centre;Sarah Guediri;2026-09;9.4;143.31;2026-09;actif
+2524;ORLEANS BOURGOGNE;07.Centre;Sarah Guediri;2026-09;0;0;;silencieux
+2511;POITIERS LECLERC;07.Centre;Sarah Guediri;2026-09;0;85.32;2026-08;ralenti
+2001;RENNES;07.Centre;Sarah Guediri;2026-09;3.5;94.91;2026-09;actif
+2502;ROMORANTIN;07.Centre;Sarah Guediri;2026-09;15.3;113.03;2026-09;actif
+2518;SAUMUR;07.Centre;Sarah Guediri;2026-09;0;12.02;2026-08;ralenti
+2521;TOURS NATIONALE;07.Centre;Sarah Guediri;2026-09;19.84;68.59;2026-09;actif
+2520;TOURS SELLERIE;07.Centre;Sarah Guediri;2026-09;0;0;;silencieux
+2024;ARGENTAN;08.Normandie;Céline Bertrand;2026-09;21.2;115.5;2026-09;actif
+2636;BOISCANY NEW;08.Normandie;Céline Bertrand;2026-09;0;6.7;2026-07;ralenti
+2605;BOLBEC;08.Normandie;Céline Bertrand;2026-09;0;0;;silencieux
+2624;DEAUVILLE;08.Normandie;Céline Bertrand;2026-09;0;0;;silencieux
+2604;DIEPPE;08.Normandie;Céline Bertrand;2026-09;23.74;75.13;2026-09;actif
+2611;DREUX;08.Normandie;Céline Bertrand;2026-09;0;7.0;2026-08;ralenti
+2625;ELBEUF MARTYRS 9;08.Normandie;Céline Bertrand;2026-09;60.45;143.6;2026-09;actif
+2607;EVREUX;08.Normandie;Céline Bertrand;2026-09;0;91.22;2026-08;ralenti
+2633;FECAMP 2;08.Normandie;Céline Bertrand;2026-09;3.5;108.18;2026-09;actif
+2004;FLERS;08.Normandie;Céline Bertrand;2026-09;9.24;39.82;2026-09;actif
+2623;HEROUVILLE ST CLAIR;08.Normandie;Céline Bertrand;2026-09;19.7;83.59;2026-09;actif
+2632;LE HAVRE COTY;08.Normandie;Céline Bertrand;2026-09;9.85;66.61;2026-09;actif
+2627;LE HAVRE LES HALLES;08.Normandie;Céline Bertrand;2026-09;0;0;;silencieux
+2606;MONTIVILLIERS;08.Normandie;Céline Bertrand;2026-09;9.4;83.56;2026-09;actif
+2620;ROUEN CARMES;08.Normandie;Céline Bertrand;2026-09;0;55.34;2026-07;ralenti
+2621;ROUEN GROS HORLOGE;08.Normandie;Céline Bertrand;2026-09;0;39.23;2026-07;ralenti
+2612;TOURVILLE;08.Normandie;Céline Bertrand;2026-09;33;180.33;2026-09;actif
+2005;VIRE;08.Normandie;Céline Bertrand;2026-09;3.5;42.71;2026-09;actif
+2618;YVETOT;08.Normandie;Céline Bertrand;2026-09;13.29;45.2;2026-09;actif
+4009;ABBEVILLE LINGERS;09.Nord - Champagne;Virginie Gouffe;2026-09;14.2;25.68;2026-09;actif
+4012;ARRAS;09.Nord - Champagne;Virginie Gouffe;2026-09;8.26;18.88;2026-09;actif
+4006;CAMBRAI BRIAND;09.Nord - Champagne;Virginie Gouffe;2026-09;15.19;44.84;2026-09;actif
+4022;CAMBRAI CORA;09.Nord - Champagne;Virginie Gouffe;2026-09;30.49;115.13;2026-09;actif
+1309;CHALONS LOMBARDS;09.Nord - Champagne;Virginie Gouffe;2026-09;33.9;57.48;2026-09;actif
+1318;COMPIEGNE;09.Nord - Champagne;Virginie Gouffe;2026-09;0;89.83;2026-08;ralenti
+3229;DOUAI ARMES;09.Nord - Champagne;Virginie Gouffe;2026-09;16.88;43.05;2026-09;actif
+4015;DUNKERQUE;09.Nord - Champagne;Virginie Gouffe;2026-09;2.34;31.38;2026-09;actif
+1304;EPERNAY MOET;09.Nord - Champagne;Virginie Gouffe;2026-09;0;0;;silencieux
+1302;LAON CARREFOUR;09.Nord - Champagne;Virginie Gouffe;2026-09;11.71;87.06;2026-09;actif
+1301;LAON VAUDOISE;09.Nord - Champagne;Virginie Gouffe;2026-09;4.66;84.66;2026-09;actif
+4017;LE TOUQUET;09.Nord - Champagne;Virginie Gouffe;2026-09;0;0;;silencieux
+4021;LOUVROIL GD LOUVROIL;09.Nord - Champagne;Virginie Gouffe;2026-09;9.4;62.22;2026-09;actif
+1305;REIMS DORMOY;09.Nord - Champagne;Virginie Gouffe;2026-09;15.3;90.39;2026-09;actif
+1315;REIMS_CORA;09.Nord - Champagne;Virginie Gouffe;2026-09;7;71.03;2026-09;actif
+1313;SOISSON_52;09.Nord - Champagne;Virginie Gouffe;2026-09;20.95;43.85;2026-09;actif
+1306;ST QUENTIN AUCHAN;09.Nord - Champagne;Virginie Gouffe;2026-09;41.16;90.9;2026-09;actif
+1317;TINQUEUX;09.Nord - Champagne;Virginie Gouffe;2026-09;12.9;81.6;2026-09;actif
+4023;TOURCOING2;09.Nord - Champagne;Virginie Gouffe;2026-09;31.27;144.27;2026-09;actif
+1804;BAGGERSEE ILLKIRCH;10.Est;Véronique Maayoufi;2026-09;17.7;75.23;2026-09;actif
+3030;DORLISHEIM;10.Est;Véronique Maayoufi;2026-09;23.92;73.77;2026-09;actif
+3214;FREYMING MERLEBACH;10.Est;Véronique Maayoufi;2026-09;0;16.88;2026-07;ralenti
+3813;FROUARD;10.Est;Véronique Maayoufi;2026-09;0;123.17;2026-08;ralenti
+1807;HAGUENAU;10.Est;Véronique Maayoufi;2026-09;0;66.04;2026-08;ralenti
+3811;HOUDEMONT;10.Est;Véronique Maayoufi;2026-09;0;29.5;2026-07;ralenti
+3812;LAXOU;10.Est;Véronique Maayoufi;2026-09;29.83;100.7;2026-09;actif
+3825;LUNEVILLE;10.Est;Véronique Maayoufi;2026-09;0;49.4;2026-08;ralenti
+3808;METZ PETIT PARIS;10.Est;Véronique Maayoufi;2026-09;3.89;79.2;2026-09;actif
+3810;NANCY ST DIZIER;10.Est;Véronique Maayoufi;2026-09;21.15;123.6;2026-09;actif
+3803;NANCY ST JEAN;10.Est;Véronique Maayoufi;2026-09;0;0;;silencieux
+1812;SAVERNE2;10.Est;Véronique Maayoufi;2026-09;42.62;161.92;2026-09;actif
+1803;SCHWEIGHOUSE;10.Est;Véronique Maayoufi;2026-09;29.93;72.13;2026-09;actif
+2905;SELESTAT;10.Est;Véronique Maayoufi;2026-09;32.2;113.85;2026-09;actif
+1814;STRASBOURG AUBETTE 3;10.Est;Véronique Maayoufi;2026-09;17.68;66.95;2026-09;actif
+1805;STRASBOURG MESANGE;10.Est;Véronique Maayoufi;2026-09;6.3;88.12;2026-09;actif
+1801;STRASBOURG ORFEVRES;10.Est;Véronique Maayoufi;2026-09;0;0;;silencieux
+3826;THIONVILLE CAPUCINS;10.Est;Véronique Maayoufi;2026-09;0;10.74;2026-08;ralenti
+3816;TOMBLAINE;10.Est;Véronique Maayoufi;2026-09;15.2;50.09;2026-09;actif
+2807;AMPHION;11.Alpes-Bourgogne;Estelle Bordier;2026-09;78.13;226.34;2026-09;actif
+3237;AUXERRE NEW;11.Alpes-Bourgogne;Estelle Bordier;2026-09;9.1;56.28;2026-09;actif
+3821;BESANCON;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;0;;silencieux
+3820;CHALONS CARREFOUR;11.Alpes-Bourgogne;Estelle Bordier;2026-09;11.2;95.88;2026-09;actif
+3805;CHALONS GD RUE;11.Alpes-Bourgogne;Estelle Bordier;2026-09;15.02;56.41;2026-09;actif
+3822;DIJON LIBERTE;11.Alpes-Bourgogne;Estelle Bordier;2026-09;19.92;105.65;2026-09;actif
+3804;DIJON TOISON OR;11.Alpes-Bourgogne;Estelle Bordier;2026-09;5.88;44.55;2026-09;actif
+2801;DIVONNE;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;0;;silencieux
+2816;EVIAN_NAT;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;0;;silencieux
+2802;FERNEY;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;0;;silencieux
+2902;ILLZACH;11.Alpes-Bourgogne;Estelle Bordier;2026-09;10.73;26.95;2026-09;actif
+3827;LANGRES 2;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;0;;silencieux
+2806;MARGENCEL;11.Alpes-Bourgogne;Estelle Bordier;2026-09;9.85;190.29;2026-09;actif
+4404;MOULINS;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;44.09;2026-07;ralenti
+2901;MULHOUSE REUNION;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;0;;silencieux
+3819;QUETIGNY;11.Alpes-Bourgogne;Estelle Bordier;2026-09;3.21;27.82;2026-09;actif
+2904;ST LOUIS;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;0;;silencieux
+2805;THONON GDE RUE 52;11.Alpes-Bourgogne;Estelle Bordier;2026-09;2.3;69.97;2026-09;actif
+3806;TROYES;11.Alpes-Bourgogne;Estelle Bordier;2026-09;0;54.85;2026-08;ralenti
+2811;ALBERTVILLE;12.Lyon - Alpes;Fanny Camier;2026-09;42.41;117.05;2026-09;actif
+2803;ANNECY BONLIEU;12.Lyon - Alpes;Fanny Camier;2026-09;81.83;157.77;2026-09;actif
+2812;ANNEMASSE;12.Lyon - Alpes;Fanny Camier;2026-09;10.5;125.49;2026-09;actif
+1723;BELLEVILLE;12.Lyon - Alpes;Fanny Camier;2026-09;17.6;66.63;2026-09;actif
+1727;BEYNOST;12.Lyon - Alpes;Fanny Camier;2026-09;14.5;82.7;2026-09;actif
+1709;BOURG EN BRESSE;12.Lyon - Alpes;Fanny Camier;2026-09;0;0;;silencieux
+2814;CLUSES CARREFOUR;12.Lyon - Alpes;Fanny Camier;2026-09;0;86.61;2026-08;ralenti
+2813;CLUSES GDE RUE;12.Lyon - Alpes;Fanny Camier;2026-09;11.7;39.34;2026-09;actif
+1710;CRECHES;12.Lyon - Alpes;Fanny Camier;2026-09;34.15;55.37;2026-09;actif
+2810;EPAGNY;12.Lyon - Alpes;Fanny Camier;2026-09;36.18;68.61;2026-09;actif
+2709;MABLY;12.Lyon - Alpes;Fanny Camier;2026-09;3.5;17.5;2026-09;actif
+1720;NEUVILLE;12.Lyon - Alpes;Fanny Camier;2026-09;7;45.7;2026-09;actif
+2820;NEYDENS;12.Lyon - Alpes;Fanny Camier;2026-09;71.57;275.76;2026-09;actif
+2708;ROANNE;12.Lyon - Alpes;Fanny Camier;2026-09;21.2;91.14;2026-09;actif
+1524;TIGNIEU;12.Lyon - Alpes;Fanny Camier;2026-09;29.75;125.15;2026-09;actif
+1731;VAULX EN VELIN BRON;12.Lyon - Alpes;Fanny Camier;2026-09;24.9;32.14;2026-09;actif
+1730;VAULX V CARRE SOIE;12.Lyon - Alpes;Fanny Camier;2026-09;7.73;79.74;2026-09;actif
+1722;VILLEFRANCHE 423;12.Lyon - Alpes;Fanny Camier;2026-09;9.66;27.72;2026-09;actif
+1721;VILLEFRANCHE 854;12.Lyon - Alpes;Fanny Camier;2026-09;11.7;64.31;2026-09;actif
+1511;VOIRON;12.Lyon - Alpes;Fanny Camier;2026-09;0;0;;silencieux
+4401;CLERMONT RESISTANCE;13.Lyon - Auvergne;Lea Vincent;2026-09;8.26;50.91;2026-09;actif
+1708;FRANCHEVILLE;13.Lyon - Auvergne;Lea Vincent;2026-09;14.35;49.55;2026-09;actif
+4406;LE PUY EN VELAY;13.Lyon - Auvergne;Lea Vincent;2026-09;39.8;78.1;2026-09;actif
+1704;LYON CROIX 50;13.Lyon - Auvergne;Lea Vincent;2026-09;0;11.19;2026-08;ralenti
+1728;LYON FRANKLIN 56;13.Lyon - Auvergne;Lea Vincent;2026-09;0;3.5;2026-07;ralenti
+1717;LYON GAMBETTA;13.Lyon - Auvergne;Lea Vincent;2026-09;23.54;64.54;2026-09;actif
+1706;LYON HERRIOT FLORINE;13.Lyon - Auvergne;Lea Vincent;2026-09;0;0;;silencieux
+1724;LYON HUGO 36 38;13.Lyon - Auvergne;Lea Vincent;2026-09;9.79;26.33;2026-09;actif
+1725;LYON LUMIERE;13.Lyon - Auvergne;Lea Vincent;2026-09;3.5;62.98;2026-09;actif
+1729;LYON PART DIEU;13.Lyon - Auvergne;Lea Vincent;2026-09;41.86;138.1;2026-09;actif
+1716;LYON SAXE 2;13.Lyon - Auvergne;Lea Vincent;2026-09;0;0;;silencieux
+1701;LYON VITTON;13.Lyon - Auvergne;Lea Vincent;2026-09;0;0;;silencieux
+2704;MONTBRISON;13.Lyon - Auvergne;Lea Vincent;2026-09;29.2;64.5;2026-09;actif
+4405;MONTLUCON COURTAIS;13.Lyon - Auvergne;Lea Vincent;2026-09;37.05;63.03;2026-09;actif
+4408;MONTLUCON ST JACQ;13.Lyon - Auvergne;Lea Vincent;2026-09;19.41;56.86;2026-09;actif
+1726;OULLINS;13.Lyon - Auvergne;Lea Vincent;2026-09;0;25.35;2026-07;ralenti
+2710;ST CHAMOND;13.Lyon - Auvergne;Lea Vincent;2026-09;0;29.45;2026-07;ralenti
+2701;ST ETIENNE FOY;13.Lyon - Auvergne;Lea Vincent;2026-09;15.3;98.25;2026-09;actif
+4413;USSEL;13.Lyon - Auvergne;Lea Vincent;2026-09;16.51;97.44;2026-09;actif
+2707;VILLARS;13.Lyon - Auvergne;Lea Vincent;2026-09;0;31.13;2026-08;ralenti
+2307;BAGNOLS SUR CEZE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;10.89;2026-07;ralenti
+2322;BOLLENE NEW;14.Rhône-Alpes;Stephanie Tourneux;2026-09;3.5;58.25;2026-09;actif
+1512;CHASSE SUR RHONE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;56.4;151.72;2026-09;actif
+1510;ECHIROLLE COMBOIRE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;47.46;114.99;2026-09;actif
+1521;FONTAINE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;16.49;77.81;2026-09;actif
+2311;GAP;14.Rhône-Alpes;Stephanie Tourneux;2026-09;27.22;97.01;2026-09;actif
+1508;GRENOBLE ALSACE LOR;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;25.8;2026-08;ralenti
+1509;GRENOBLE GRENETTE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;0;;silencieux
+1501;GRENOBLE POULAT;14.Rhône-Alpes;Stephanie Tourneux;2026-09;10.44;85.0;2026-09;actif
+2305;MONTELIMAR GEANT;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;35.59;2026-08;ralenti
+2304;MONTELIMAR.STE.CROIX;14.Rhône-Alpes;Stephanie Tourneux;2026-09;23.07;87.12;2026-09;actif
+2308;NYONS;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;0;;silencieux
+2312;ORANGE BRIAND;14.Rhône-Alpes;Stephanie Tourneux;2026-09;5.88;38.99;2026-09;actif
+2303;PIERRELATTE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;7;153.11;2026-09;actif
+2318;ROMANS JACQUEMART;14.Rhône-Alpes;Stephanie Tourneux;2026-09;5.88;25.32;2026-09;actif
+2319;ROMANS JAURES;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;35.15;2026-08;ralenti
+1513;SALAISE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;6.02;112.75;2026-09;actif
+1522;ST MARTIN D HERES;14.Rhône-Alpes;Stephanie Tourneux;2026-09;2.83;113.68;2026-09;actif
+1514;ST_EGREVE;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;41.54;2026-07;ralenti
+2310;VALENCE HUGO 17;14.Rhône-Alpes;Stephanie Tourneux;2026-09;37.19;108.32;2026-09;actif
+2315;VALENCE HUGO 18;14.Rhône-Alpes;Stephanie Tourneux;2026-09;0;33.86;2026-08;ralenti
+1516;VIENNE_ PONSARD;14.Rhône-Alpes;Stephanie Tourneux;2026-09;2.35;28.07;2026-09;actif
+1503;VIENNE_MITTERRAND;14.Rhône-Alpes;Stephanie Tourneux;2026-09;15.3;54.89;2026-09;actif
+3227;AIX EN PROVENCE;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+4501;AIX LES MILLES;15.Sud Est;Francis Khanic;2026-09;0;17.46;2026-07;ralenti
+3601;ANTIBES DE GAULLE;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+3613;ANTIBES THURET;15.Sud Est;Francis Khanic;2026-09;12.9;110.9;2026-09;actif
+3234;CABRIES 2;15.Sud Est;Francis Khanic;2026-09;0;111.21;2026-08;ralenti
+3617;CAGNES RENOIR;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+3609;CANNES ANTIBES;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+3612;DRAGUIGNAN CARREFOUR;15.Sud Est;Francis Khanic;2026-09;48.2;170.01;2026-09;actif
+3611;DRAGUIGNAN CLEMEN;15.Sud Est;Francis Khanic;2026-09;23.02;109.98;2026-09;actif
+4515;HYERES BELLON;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+3616;LA TRINITE;15.Sud Est;Francis Khanic;2026-09;46;235.33;2026-09;actif
+4533;MARSEILLE  VALENTINE;15.Sud Est;Francis Khanic;2026-09;24.66;92.56;2026-09;actif
+4523;MARSEILLE BOURSE 1;15.Sud Est;Francis Khanic;2026-09;4.76;115.67;2026-09;actif
+4522;MARSEILLE CAILLOLS;15.Sud Est;Francis Khanic;2026-09;3.5;25.77;2026-09;actif
+4538;MARSEILLE TDP NEW;15.Sud Est;Francis Khanic;2026-09;12.71;81.5;2026-09;actif
+3614;MENTON;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+3602;NICE MASSENA 28;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+3618;ST RAPHAEL;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+4536;TOULON LA VALETTE;15.Sud Est;Francis Khanic;2026-09;39.87;168.98;2026-09;actif
+4513;TOULON STRASBOURG;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+3607;VENCE;15.Sud Est;Francis Khanic;2026-09;0;0;;silencieux
+4504;VITROLLES;15.Sud Est;Francis Khanic;2026-09;3.5;25.55;2026-09;actif
+3710;ALES;16.Sud;Aurelie Mazel;2026-09;41.29;135.22;2026-09;actif
+4519;ARLES HDV;16.Sud;Aurelie Mazel;2026-09;0;0;;silencieux
+3719;BALARUC;16.Sud;Aurelie Mazel;2026-09;100.07;226.11;2026-09;actif
+4528;CAVAILLON;16.Sud;Aurelie Mazel;2026-09;49.17;170.01;2026-09;actif
+3718;LE CRES;16.Sud;Aurelie Mazel;2026-09;13.35;25.05;2026-09;actif
+4525;LE PONTET;16.Sud;Aurelie Mazel;2026-09;0;21.94;2026-08;ralenti
+4505;MARTIGUES AUCHAN;16.Sud;Aurelie Mazel;2026-09;0;33.4;2026-07;ralenti
+4529;MARTIGUES JONQUIERES;16.Sud;Aurelie Mazel;2026-09;14.84;70.06;2026-09;actif
+3708;MENDE;16.Sud;Aurelie Mazel;2026-09;11.91;117.44;2026-09;actif
+3705;MILLAU;16.Sud;Aurelie Mazel;2026-09;0;39.74;2026-08;ralenti
+4518;MIRAMAS;16.Sud;Aurelie Mazel;2026-09;2.35;18.58;2026-09;actif
+3235;MONTPELLIER MILHAU 2;16.Sud;Aurelie Mazel;2026-09;0;11.4;2026-07;ralenti
+3722;MONTPELLIER MOULIN;16.Sud;Aurelie Mazel;2026-09;36.83;59.48;2026-09;actif
+4508;NIMES CARREFOUR SUD;16.Sud;Aurelie Mazel;2026-09;0;13.82;2026-08;ralenti
+4510;NIMES ETOILE;16.Sud;Aurelie Mazel;2026-09;0;29.97;2026-07;ralenti
+4509;NIMES MADELEINE;16.Sud;Aurelie Mazel;2026-09;13.26;75.76;2026-09;actif
+3729;PEROLS;16.Sud;Aurelie Mazel;2026-09;14.14;52.94;2026-09;actif
+3724;PEZENAS;16.Sud;Aurelie Mazel;2026-09;0;7.08;2026-07;ralenti
+3731;SETE GAMBETTA 2;16.Sud;Aurelie Mazel;2026-09;52.67;132.23;2026-09;actif
+3717;ST AUNES;16.Sud;Aurelie Mazel;2026-09;0;148.89;2026-08;ralenti
+3716;ST JEAN DE VEDAS;16.Sud;Aurelie Mazel;2026-09;0;106.64;2026-08;ralenti
+3732;ALBI LECLERC;17.Sud Ouest;Camille faur;2026-09;25.15;71.61;2026-09;actif
+2405;ANGLET;17.Sud Ouest;Camille faur;2026-09;0;24.17;2026-08;ralenti
+2401;BAYONNE LABAT;17.Sud Ouest;Camille faur;2026-09;0;26.17;2026-08;ralenti
+3703;BEZIERS AUCHAN;17.Sud Ouest;Camille faur;2026-09;11.72;82.09;2026-09;actif
+3704;BEZIERS REPUBLIQUE;17.Sud Ouest;Camille faur;2026-09;19.02;26.02;2026-09;actif
+2403;BIARRITZ;17.Sud Ouest;Camille faur;2026-09;0;0;;silencieux
+2407;DAX;17.Sud Ouest;Camille faur;2026-09;11.8;15.16;2026-09;actif
+3709;MAZAMET;17.Sud Ouest;Camille faur;2026-09;3.5;65.97;2026-09;actif
+2410;MONT MARSAN CARREFOU;17.Sud Ouest;Camille faur;2026-09;6.9;49.56;2026-09;actif
+1613;MONTAUBAN MICHELET;17.Sud Ouest;Camille faur;2026-09;0;0;;silencieux
+1612;MURET;17.Sud Ouest;Camille faur;2026-09;2.34;69.74;2026-09;actif
+3728;NARBONNE CASINO;17.Sud Ouest;Camille faur;2026-09;54.43;197.5;2026-09;actif
+3713;NARBONNE JAURES 13;17.Sud Ouest;Camille faur;2026-09;3.54;108.76;2026-09;actif
+2411;PAU;17.Sud Ouest;Camille faur;2026-09;3.5;31.34;2026-09;actif
+1605;PORTET;17.Sud Ouest;Camille faur;2026-09;0;17.34;2026-07;ralenti
+3706;RODEZ;17.Sud Ouest;Camille faur;2026-09;0;86.76;2026-08;ralenti
+2404;ST JEAN DE LUZ;17.Sud Ouest;Camille faur;2026-09;0;0;;silencieux
+2412;TARBES MERIDIEN;17.Sud Ouest;Camille faur;2026-09;0;15.34;2026-08;ralenti
+3226;TOULOUSE ALSACE 21;17.Sud Ouest;Camille faur;2026-09;11.8;78.61;2026-09;actif
+1602;TOULOUSE ALSACE 79;17.Sud Ouest;Camille faur;2026-09;29.89;110.98;2026-09;actif
+1618;TOULOUSE FENOUILLET;17.Sud Ouest;Camille faur;2026-09;11.5;56.42;2026-09;actif
+1611;TOULOUSE PURPAN;17.Sud Ouest;Camille faur;2026-09;0;75.18;2026-08;ralenti
+4707;ANGOULINS;18. Ouest;;2026-09;0;73.03;2026-08;ralenti
+1922;ARCACHON;18. Ouest;;2026-09;15.09;30.25;2026-09;actif
+1901;BORDEAUX CLEMENCEAU;18. Ouest;;2026-09;0;0;;silencieux
+1905;BORDEAUX INTENDANCE;18. Ouest;;2026-09;0;0;;silencieux
+1903;BORDEAUX MERIADEK;18. Ouest;;2026-09;7;65.53;2026-09;actif
+1908;BORDEAUX VERDUN;18. Ouest;;2026-09;0;0;2026-06;silencieux
+1902;BOUSCAT;18. Ouest;;2026-09;0;1.75;2026-08;ralenti
+2503;GUERET;18. Ouest;;2026-09;15.91;121.0;2026-09;actif
+4709;LA ROCHELLE;18. Ouest;;2026-09;0;0;;silencieux
+4412;LIMOGES BEAUBREUIL;18. Ouest;;2026-09;10.47;135.52;2026-09;actif
+4411;LIMOGES CLOCHER;18. Ouest;;2026-09;31.62;70.71;2026-09;actif
+4410;LIMOGES ST MARTIAL;18. Ouest;;2026-09;22.64;99.63;2026-09;actif
+1910;LORMONT;18. Ouest;;2026-09;3.5;79.21;2026-09;actif
+1906;MERIGNAC;18. Ouest;;2026-09;4.63;50.96;2026-09;actif
+1921;PESSAC 2;18. Ouest;;2026-09;4.79;61.24;2026-09;actif
+4704;ROCHEFORT;18. Ouest;;2026-09;0;61.65;2026-08;ralenti
+4710;ROYAN;18. Ouest;;2026-09;0;0;;silencieux
+4702;SAINTES;18. Ouest;;2026-09;3.5;76.72;2026-09;actif
+4414;TULLE;18. Ouest;;2026-09;9.4;81.35;2026-09;actif

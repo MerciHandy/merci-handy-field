@@ -203,3 +203,17 @@ Pour désactiver temporairement : supprime juste la ligne `slack_webhook_url` de
 ---
 
 **Fait avec 💖 pour Merci Handy.**
+
+---
+
+## 🗺️ DN Marionnaud (sell-out par magasin) — ajouté le 14/10/2026
+
+`marionnaud_dn.csv` (racine du repo) relie chaque magasin Marionnaud de la carte, via son **code magasin**,
+à sa zone, à sa RRV et à ses ventes Merci Handy (source : dashboard Spectrum).
+
+- **Fiche magasin + recherche** : zone · RRV, et 🟢 vend / 🟠 pas de vente le dernier mois / 🔇 aucune vente sur 3 mois.
+  La recherche trouve un magasin par le nom de la RRV ou « zone 02 ».
+- **Tournées** : bonus de priorité pour les magasins qui ne vendent pas (+20 si 🔇, +8 si 🟠). Le motif l'indique.
+- **Mise à jour mensuelle** : le fichier est régénéré depuis le projet SELL IN X SELL OUT
+  (`sources/export_field_marionnaud.py`) à chaque mise à jour Marionnaud, puis uploadé ici.
+  Si le fichier est absent, l'app fonctionne comme avant.

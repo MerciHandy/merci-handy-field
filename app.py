@@ -3907,6 +3907,80 @@ def _cp_from_any(*values):
     return ""
 
 
+# --- DN Marionnaud : sell-out par magasin, exporté depuis Spectrum -------------
+# Fichier marionnaud_dn.csv à la racine du repo, régénéré chaque mois depuis le
+# projet SELL IN X SELL OUT (sources/export_field_marionnaud.py). Clé = code
+# magasin Marionnaud, le même que dans la carte My Maps (« unnamed (1) »).
+DN_FILE = "marionnaud_dn.csv"
+DN_STATUT = {
+    "actif":      ("🟢", "#2D9D6F", "Vend Merci Handy"),
+    "ralenti":    ("🟠", "#C68B00", "Pas de vente le dernier mois"),
+    "silencieux": ("🔇", "#C0392B", "Aucune vente sur 3 mois"),
+}
+DN_BONUS_TOUR = {"silencieux": 20.0, "ralenti": 8.0}
+MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+
+
+def _mois_fr(ym):
+    try:
+        y, m = str(ym).split("-")[:2]
+        return f"{MOIS_FR[int(m) - 1]} {y}"
+    except Exception:
+        return str(ym or "")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_marionnaud_dn():
+    """{code magasin: {nom, zone, rrv, mois_donnees, ca_mois, ca_3m, derniere_vente, statut}}."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DN_FILE)
+    try:
+        df = pd.read_csv(path, sep=";", dtype=str).fillna("")
+    except Exception:
+        return {}
+    out = {}
+    for r in df.to_dict("records"):
+        code = str(r.get("code", "")).strip()
+        if code:
+            for k in ("ca_mois", "ca_3m"):
+                try:
+                    r[k] = float(r.get(k) or 0)
+                except Exception:
+                    r[k] = 0.0
+            out[code] = r
+    return out
+
+
+def dn_for(s):
+    """Ligne DN d'un magasin Marionnaud (None pour les autres enseignes)."""
+    if "marionnaud" not in _norm_txt(str(s.get("enseigne", ""))):
+        return None
+    code = str(s.get("code", "")).strip()
+    return load_marionnaud_dn().get(code) if code else None
+
+
+def dn_zone_label(dn):
+    zone = re.sub(r"^(\d+)\.\s*", r"Zone \1 · ", str(dn.get("zone", "")))
+    return f'{zone} — {dn.get("rrv") or "RRV non nommée"}'
+
+
+def dn_lines(dn):
+    """Deux lignes HTML : zone/RRV et état des ventes."""
+    if not dn:
+        return []
+    ico, col, lib = DN_STATUT.get(dn.get("statut"), ("•", TEXT_SOFT, ""))
+    mois = _mois_fr(dn.get("mois_donnees"))
+    if dn.get("statut") == "actif":
+        vente = f'{lib} · {dn["ca_mois"]:.0f} € en {mois} · {dn["ca_3m"]:.0f} € sur 3 mois'
+    elif dn.get("statut") == "ralenti":
+        vente = f'{lib} ({mois}) · dernière vente {_mois_fr(dn.get("derniere_vente"))} · {dn["ca_3m"]:.0f} € sur 3 mois'
+    else:
+        vente = f'{lib} (jusqu\'à {mois}) — rupture ou mauvais emplacement à vérifier'
+    return [
+        f'<span style="font-size:12px;color:{TEXT_SOFT};">🗺️ {html.escape(dn_zone_label(dn))}</span>',
+        f'<span style="font-size:12px;font-weight:700;color:{col};">{ico} {html.escape(vente)}</span>',
+    ]
+
+
 def store_key(s):
     """Identifiant stable d'un magasin : nom + ville (comme build_map_points)."""
     return f"{str(s.get('magasin', '')).strip()}||{str(s.get('ville', '')).strip()}"
@@ -3936,6 +4010,9 @@ def store_index():
         rec = dict(p)
         rec["cp"] = cp
         rec["dept"] = dept
+        rec["dn"] = dn_for(rec)
+        if rec["dn"]:
+            hay += " " + " ".join([rec["dn"].get("zone", ""), rec["dn"].get("rrv", ""), "zone " + rec["dn"].get("zone", "")[:2]])
         rec["hay"] = _norm_txt(hay)
         rec["derniere_visite"] = ""
         rec["dernier_passage"] = ""
@@ -4093,6 +4170,7 @@ def render_store_card(s):
         f'<span style="color:{PRIMARY};font-weight:600;">{html.escape(str(s.get("enseigne", "")))}</span><br>'
         f'<span style="font-size:12px;color:{TEXT_SOFT};">📍 {html.escape(lieu)}</span><br>'
         f'<span style="font-size:12px;color:{TEXT_SOFT};">{html.escape(info)}</span>'
+        + "".join("<br>" + l for l in dn_lines(s.get("dn"))) +
         f'</div>'
         f'<div style="font-size:11px;font-weight:700;color:{color};white-space:nowrap;">{label}</div>'
         f'</div></div>',
@@ -4246,6 +4324,7 @@ def screen_store_detail():
         lignes.append(f'<span style="font-size:13px;">📞 <a href="tel:{html.escape(tel)}">{html.escape(tel)}</a></span>')
     if code:
         lignes.append(f'<span style="font-size:12px;color:{TEXT_SOFT};">🔖 Code magasin {html.escape(code)}</span>')
+    lignes.extend(dn_lines((store or {}).get("dn")))
     if lat is not None and lon is not None:
         itin = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=transit"
         lignes.append(f'<span style="font-size:13px;">🧭 <a href="{itin}" target="_blank">Itinéraire</a></span>')
@@ -4424,6 +4503,12 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
             if last_etat and is_problem_etat(last_etat):
                 score += 25.0
                 motif += " · souci signalé"
+        dn = s.get("dn")
+        if dn and dn.get("statut") in DN_BONUS_TOUR:
+            # Référencé mais ne vend pas (sell-out Marionnaud) : rupture, mauvais
+            # emplacement ou produit absent du linéaire — une visite y change tout.
+            score += DN_BONUS_TOUR[dn["statut"]]
+            motif += " · 🔇 0 vente 3 mois" if dn["statut"] == "silencieux" else " · 🟠 pas de vente le dernier mois"
         if s.get("approx"):
             score -= 12.0     # position approximative : itinéraire moins fiable
 
