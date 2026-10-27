@@ -3918,13 +3918,13 @@ DN_STATUT = {
     "silencieux": ("🔇", "#C0392B", "Aucune vente sur 3 mois · hors tournées"),
 }
 DN_HORS_TOURNEE = ("silencieux",)   # 0 vente sur 3 mois = exclu des tournées (référencement décidé par le siège)
-MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+MOIS_FR_COURT = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 
 
 def _mois_fr(ym):
     try:
         y, m = str(ym).split("-")[:2]
-        return f"{MOIS_FR[int(m) - 1]} {y}"
+        return f"{MOIS_FR_COURT[int(m) - 1]} {y}"
     except Exception:
         return str(ym or "")
 
