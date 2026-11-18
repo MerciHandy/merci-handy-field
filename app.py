@@ -110,6 +110,11 @@ DEFAULT_STATUTS_PROSPECT = [
 
 DEFAULT_ADMIN_PASSWORD = "mercihandy2026"
 
+# Onglets de corrections, gérés depuis l'admin (une valeur par ligne, colonne A)
+HORS_TOURNEE_SHEET = "Hors tournées"   # « 52 RUE DE RENNES || Paris (75006) »
+ALIAS_RESEAU_SHEET = "Alias réseau"    # « 14 RUE SAINTE APPOLINE 75002 => 15 BOULEVARD SAINT-DENIS »
+ARCHIVE_SHEET = "Archives"             # visites supprimées (l'import ne les recrée pas)
+
 # =========================================================================
 # STYLE — Pop & Colorful Merci Handy 💖
 # =========================================================================
@@ -718,7 +723,7 @@ def get_config_sheet(name):
 def init_config_if_empty(name, default_values):
     ws = get_config_sheet(name)
     values = ws.col_values(1)
-    if len(values) <= 1:
+    if len(values) <= 1 and default_values:
         ws.append_rows([[v] for v in default_values])
     return ws
 
@@ -730,6 +735,16 @@ def load_config_list(name, default_values_tuple):
     values = ws.col_values(1)
     result = [v for v in values[1:] if v.strip()]
     return result if result else default_values
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_plain_list(name):
+    """Valeurs d'un onglet de config SANS valeurs par défaut (onglet vide = liste vide)."""
+    try:
+        ws = get_config_sheet(name)
+        return [v.strip() for v in ws.col_values(1)[1:] if str(v).strip()]
+    except Exception:
+        return []
 
 
 def add_to_config(name, value, default_values):
@@ -2133,6 +2148,41 @@ def geocode_addresses_batch(rows):
     return out
 
 
+def apply_network_aliases(stores, aliases):
+    """Corrige l'adresse de fiches My Maps fausses, sans toucher à la carte.
+
+    `aliases` : lignes « ANCIENNE RUE [CP] => NOUVELLE RUE » (onglet « Alias réseau »).
+    Ex. « 14 RUE SAINTE APPOLINE 75002 => 15 BOULEVARD SAINT-DENIS » : la fiche
+    prend la nouvelle adresse (et donc la bonne position au géocodage) et les
+    visites saisies au « 15 boulevard Saint-Denis » s'y rattachent.
+    """
+    regles = []
+    for a in aliases or []:
+        if "=>" not in str(a):
+            continue
+        old, new = (x.strip() for x in str(a).split("=>", 1))
+        m = re.search(r"\b(\d{5})\s*$", old)
+        cp = m.group(1) if m else ""
+        old = re.sub(r"\b\d{5}\s*$", "", old).strip(" ,")
+        if old and new:
+            regles.append((_phrase(old), cp, new))
+    if not regles:
+        return stores
+    for s in stores:
+        for old_ph, cp, new in regles:
+            if cp and s.get("cp") and cp != s["cp"]:
+                continue
+            if old_ph not in (_phrase(s.get("rue", "")), _phrase(s.get("nom", ""))):
+                continue
+            if _phrase(s.get("nom", "")) in (old_ph, _phrase(s.get("rue", ""))):
+                s["nom"] = new
+            s["rue"] = new
+            s["adresse"] = " ".join(x for x in [new, s.get("cp", ""), s.get("city", "")] if x)
+            s["lat"] = s["lon"] = None      # à regéocoder avec la nouvelle adresse
+            break
+    return stores
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_network_stores():
     """Magasins du réseau depuis la carte My Maps (export KML, rafraîchi toutes les heures).
@@ -2236,6 +2286,8 @@ def load_network_stores():
                 "lat": lat, "lon": lon, "approx": False,
             })
 
+    apply_network_aliases(stores, load_plain_list(ALIAS_RESEAU_SHEET))
+
     # Ce KML My Maps n'exporte pas de <Point> : géocodage de toutes les adresses
     # manquantes en un seul appel batch (BAN), repli centre-ville sinon.
     to_geo = tuple(
@@ -2285,6 +2337,15 @@ def _cp_of(ville):
     if m:
         return m.group(1)
     return v if re.fullmatch(r"\d{5}", v) else ""
+
+
+def _city_key(ville):
+    """Ville comparable : « Levallois-Perret (92300) » = « LEVALLOIS PERRET »,
+    « St-Ouen » = « Saint Ouen ». Sans CP ; '' si rien d'exploitable."""
+    v = re.sub(r"\(\s*\d{5}\s*\)", "", str(ville or "")).strip()
+    if re.fullmatch(r"\d*", v):
+        return ""
+    return " ".join(_phrase(v).split())
 
 
 def _city_of(ville):
@@ -2433,6 +2494,25 @@ def _phrase(s):
     return " " + " ".join(t.split()) + " "
 
 
+_ENSEIGNES_INCONNUES = {"", "autre", "autres", "?", "-"}
+
+
+def enseigne_effective(enseigne, magasin, connues):
+    """Enseigne saisie, ou — si « Autre » / vide — celle qui figure dans le nom.
+
+    `connues` : enseignes candidates, les plus longues d'abord (« Galeries
+    Lafayette » avant « Galeries »). Mot entier uniquement.
+    """
+    if _norm_txt(enseigne).strip() not in _ENSEIGNES_INCONNUES:
+        return enseigne
+    nom = _phrase(magasin)
+    for e in connues:
+        pe = _phrase(e)
+        if pe.strip() and _norm_txt(e).strip() not in _ENSEIGNES_INCONNUES and pe in nom:
+            return e
+    return enseigne
+
+
 def _merge_store_group(members, base=None):
     """Fusionne plusieurs fiches (variantes de nom d'un même magasin) en une seule.
 
@@ -2503,12 +2583,23 @@ def build_map_points():
     - nb_sans_position : magasins impossibles à placer
     """
     # --- 1. Regroupement par nom + ville identiques --------------------------
-    stores = {}
+    frames = []
     for kind, loader in (("visite", load_visits), ("prospect", load_prospects)):
         try:
-            df = loader()
+            frames.append((kind, loader()))
         except Exception:
             continue
+    try:
+        enseignes_connues = list(load_config_list("Enseignes", tuple(DEFAULT_ENSEIGNES)))
+    except Exception:
+        enseignes_connues = list(DEFAULT_ENSEIGNES)
+    for _, df in frames:
+        if not df.empty and "Enseigne" in df.columns:
+            enseignes_connues.extend(str(e).strip() for e in df["Enseigne"].unique())
+    enseignes_connues = sorted({e for e in enseignes_connues if e}, key=len, reverse=True)
+
+    stores = {}
+    for kind, df in frames:
         if df.empty or "Magasin" not in df.columns:
             continue
         rows = []
@@ -2520,15 +2611,22 @@ def build_map_points():
             ville = str(r.get("Ville", "")).strip()
             if not mag:
                 continue
-            ens = str(r.get("Enseigne", "")).strip()
+            ens_saisie = str(r.get("Enseigne", "")).strip()
+            # « Autre » / vide : l'enseigne se lit souvent dans le nom
+            # (« BLISSIM 17 rue Montmartre » saisi en « Autre »).
+            ens = enseigne_effective(ens_saisie, mag, enseignes_connues)
             # L'enseigne fait partie de la clé : « St lazare » à Paris existe chez
             # Sephora ET chez Marionnaud — ce sont deux magasins différents.
             key = (mag.lower(), ville.lower(), _norm_txt(ens))
             s = stores.setdefault(key, {
                 "magasin": mag, "ville": ville, "enseigne": "",
                 "type": "prospect", "lat": None, "lon": None,
-                "n": 0, "hist": [], "aliases": [key],
+                "n": 0, "hist": [], "aliases": [],
             })
+            # Alias = la saisie BRUTE (store_passages relit la Sheet avec)
+            alias = (mag.lower(), ville.lower(), _norm_txt(ens_saisie))
+            if alias not in s["aliases"]:
+                s["aliases"].append(alias)
             if kind == "visite":
                 s["type"] = "client"
             s["n"] += 1
@@ -2579,7 +2677,7 @@ def build_map_points():
         ens = _enseigne_reseau(ns["layer"], ns["nom"], enseignes_cfg)
         ens_norm = _norm_txt(ens)
         ns_cp = ns.get("cp", "")
-        ns_city = _norm_txt(ns.get("city", ""))
+        ns_city = _city_key(ns.get("city", ""))
         if ns_cp:
             cnt_cp[(ens_norm, ns_cp)] = cnt_cp.get((ens_norm, ns_cp), 0) + 1
         if ns_city:
@@ -2605,7 +2703,7 @@ def build_map_points():
         p_ens = _norm_txt(p["enseigne"])
         p_tokens = _store_words(p["magasin"]) - _tokens(p["enseigne"]) - _tokens(p["ville"]) - _STORE_STOP
         p_nums = _store_numbers(p["magasin"])
-        p_cp, p_city = _cp_of(p["ville"]), _city_of(p["ville"])
+        p_cp, p_city = _cp_of(p["ville"]), _city_key(p["ville"])
         # nom saisi sans l'enseigne, pour le chercher tel quel dans le nom/la rue
         p_ph = _phrase(p["magasin"])
         for w in _phrase(p["enseigne"]).split():
@@ -2723,7 +2821,7 @@ def build_map_points():
         meta.append((
             _norm_txt(p["enseigne"]),
             frozenset(_store_words(p["magasin"]) - _tokens(p["enseigne"]) - _tokens(p["ville"]) - _STORE_STOP),
-            _cp_of(p["ville"]), _city_of(p["ville"]),
+            _cp_of(p["ville"]), _city_key(p["ville"]),
             not p["approx"] and p["lat"] is not None,
         ))
     pairs = []
@@ -2733,7 +2831,9 @@ def build_map_points():
             continue
         for b in range(a + 1, len(unmatched)):
             eb, tb, cpb, cib, gb = meta[b]
-            if ea != eb or ta != tb:
+            # Mêmes mots, ou les mots de l'un contenus dans ceux de l'autre :
+            # « Forum des halles » = « Westfield Forum des Halles ».
+            if ea != eb or not tb or not (ta <= tb or tb <= ta):
                 continue
             if cpa and cpb:
                 same_place = cpa == cpb
@@ -3234,7 +3334,7 @@ def screen_admin():
 
     st.write("")
 
-    tab0, tab1, tab_pros, tab_imp, tab2, tab3, tab4, tab5 = st.tabs(["📊 Analyses", "📋 Visites", "🔍 Démarchage", "📥 Import", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🔔 Slack"])
+    tab0, tab1, tab_pros, tab_imp, tab2, tab3, tab4, tab_corr, tab5 = st.tabs(["📊 Analyses", "📋 Visites", "🔍 Démarchage", "📥 Import", "🏪 Enseignes", "🚀 Projets / animations", "📋 États linéaire", "🛠️ Corrections", "🔔 Slack"])
 
     with tab0:
         manage_analytics()
@@ -3252,6 +3352,17 @@ def screen_admin():
         manage_list("Projets", DEFAULT_PROJETS)
     with tab4:
         manage_list("Etats", DEFAULT_ETATS, with_emoji_hint=True)
+    with tab_corr:
+        st.markdown("#### 🚫 Magasins retirés des tournées")
+        st.caption("Format : `NOM DU MAGASIN || Ville (CP)`. Le plus simple : bouton "
+                   "« Retirer des tournées » sur la fiche magasin.")
+        manage_list(HORS_TOURNEE_SHEET, [])
+        st.divider()
+        st.markdown("#### 📍 Adresses corrigées de la carte My Maps")
+        st.caption("Format : `ANCIENNE ADRESSE CP => NOUVELLE ADRESSE` — ex. "
+                   "`14 RUE SAINTE APPOLINE 75002 => 15 BOULEVARD SAINT-DENIS`. "
+                   "La fiche de la carte prend la nouvelle adresse (prise en compte sous 1 h).")
+        manage_list(ALIAS_RESEAU_SHEET, [])
     with tab5:
         manage_slack_test()
 
@@ -3986,6 +4097,36 @@ def store_key(s):
     return f"{str(s.get('magasin', '')).strip()}||{str(s.get('ville', '')).strip()}"
 
 
+def _hors_tournee_cle(magasin, ville):
+    """Clé d'exclusion : nom normalisé + CP (ou ville si pas de CP)."""
+    return (" ".join(_phrase(magasin).split()), _cp_of(ville) or _city_key(ville))
+
+
+def hors_tournee_valeur(s):
+    """Ligne à écrire dans l'onglet « Hors tournées » pour ce magasin."""
+    return f"{str(s.get('magasin', '')).strip()} || {str(s.get('ville', '')).strip()}"
+
+
+def hors_tournee_cles(valeurs=None):
+    valeurs = load_plain_list(HORS_TOURNEE_SHEET) if valeurs is None else valeurs
+    out = set()
+    for v in valeurs:
+        mag, _, ville = str(v).partition("||")
+        if mag.strip():
+            out.add(_hors_tournee_cle(mag, ville))
+    return out
+
+
+def is_hors_tournee(s, cles=None):
+    """Vrai si le magasin (sous son nom ou une de ses variantes) est retiré des tournées."""
+    cles = hors_tournee_cles() if cles is None else cles
+    if not cles:
+        return False
+    noms = [(s.get("magasin", ""), s.get("ville", ""))]
+    noms += [(a[0], a[1]) for a in (s.get("aliases") or []) if len(a) >= 2]
+    return any(_hors_tournee_cle(m, v) in cles for m, v in noms)
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def store_index():
     """Index de recherche de TOUS les magasins connus.
@@ -4356,6 +4497,25 @@ def screen_store_detail():
             st.session_state.screen = "new_prospect"
             st.rerun()
 
+    # Retirer / remettre le magasin dans les tournées recommandées
+    if store:
+        valeurs = load_plain_list(HORS_TOURNEE_SHEET)
+        exclu = is_hors_tournee(store, hors_tournee_cles(valeurs))
+        if exclu:
+            st.caption("🚫 Ce magasin est retiré des tournées recommandées.")
+            if st.button("↩️ Remettre dans les tournées", use_container_width=True):
+                cles_store = {_hors_tournee_cle(store.get("magasin", ""), store.get("ville", ""))}
+                cles_store |= {_hors_tournee_cle(a[0], a[1]) for a in (store.get("aliases") or []) if len(a) >= 2}
+                for v in valeurs:
+                    mag_v, _, ville_v = v.partition("||")
+                    if _hors_tournee_cle(mag_v, ville_v) in cles_store:
+                        remove_from_config(HORS_TOURNEE_SHEET, v, [])
+                st.rerun()
+        elif st.button("🚫 Retirer des tournées", use_container_width=True,
+                       help="Magasin fermé, hors cible… Il ne sera plus proposé dans les tournées."):
+            add_to_config(HORS_TOURNEE_SHEET, hors_tournee_valeur(store), [])
+            st.rerun()
+
     st.write("")
     passages = store_passages(magasin, ville)
     st.markdown(
@@ -4465,12 +4625,19 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
     """
     today = today or datetime.now().date()
     today_iso = today.isoformat()
+    exclus = hors_tournee_cles()
+    idx = store_index()
+    ens_carte = enseignes_de_la_carte(idx)
     cands = []
-    for s in store_index():
+    for s in idx:
         if s.get("dept") not in depts:
             continue
         if s.get("lat") is None or s.get("lon") is None:
             continue
+        if is_hors_tournee(s, exclus):
+            continue      # retiré à la main (magasin fermé, hors cible…)
+        if absent_de_la_carte(s, ens_carte, today):
+            continue      # plus sur la carte FIELD : liste « À vérifier »
 
         last_v, last_etat, last_any = "", "", ""
         for h in (s.get("hist_all") or []):
@@ -4522,6 +4689,52 @@ def tour_candidates(depts, cadence=TOUR_CADENCE_J, cooldown=TOUR_COOLDOWN_J, tod
     return cands
 
 
+TOUR_VERIF_CARTE_J = 90   # au-delà, un magasin absent de la carte FIELD est « à vérifier »
+
+
+def enseignes_de_la_carte(idx=None):
+    """Enseignes présentes sur la carte My Maps « Carte FIELD » (normalisées)."""
+    idx = store_index() if idx is None else idx
+    return {_norm_txt(s.get("enseigne", "")) for s in idx
+            if s.get("adresse_reseau") or s.get("type") == "reseau"} - {""}
+
+
+def absent_de_la_carte(s, ens_carte, today):
+    """Magasin d'une enseigne suivie sur la carte FIELD, que la carte ne connaît pas
+    (ou plus), et sans passage depuis TOUR_VERIF_CARTE_J jours.
+
+    Typiquement un magasin fermé, ou une adresse mal saisie : on ne l'envoie pas
+    en tournée tant que quelqu'un n'a pas vérifié (suggestion Louis, 18/11/2026).
+    """
+    if s.get("adresse_reseau") or s.get("type") == "reseau":
+        return False
+    if _norm_txt(s.get("enseigne", "")) not in ens_carte:
+        return False      # BHV, Printemps, pharmacies… : pas sur la carte, c'est normal
+    last = next((h["date"] for h in (s.get("hist_all") or []) if h.get("date")), "")
+    depuis = _days_since(last, today) if last else None
+    return depuis is not None and depuis >= TOUR_VERIF_CARTE_J
+
+
+def verif_carte_candidates(depts, today=None):
+    """Magasins absents de la carte FIELD et pas vus depuis longtemps (hors tournées)."""
+    today = today or datetime.now().date()
+    idx = store_index()
+    ens_carte = enseignes_de_la_carte(idx)
+    exclus = hors_tournee_cles()
+    out = []
+    for s in idx:
+        if depts and s.get("dept") not in depts:
+            continue
+        if is_hors_tournee(s, exclus) or not absent_de_la_carte(s, ens_carte, today):
+            continue
+        c = dict(s)
+        c["last_any"] = next((h["date"] for h in (s.get("hist_all") or []) if h.get("date")), "")
+        c["depuis"] = _days_since(c["last_any"], today)
+        out.append(c)
+    out.sort(key=lambda c: -(c["depuis"] or 0))
+    return out
+
+
 TOUR_RECONQUETE_J = 90    # rythme de repassage dans un magasin où l'on n'est plus référencé
 
 
@@ -4533,9 +4746,12 @@ def reconquest_candidates(depts, today=None):
     Triés du passage le plus ancien au plus récent.
     """
     today = today or datetime.now().date()
+    exclus = hors_tournee_cles()
     out = []
     for s in store_index():
         if depts and s.get("dept") not in depts:
+            continue
+        if is_hors_tournee(s, exclus):
             continue
         last_v, last_etat, last_any = "", "", ""
         for h in (s.get("hist_all") or []):
@@ -4788,6 +5004,39 @@ def _tour_prefs_save(values):
         pass
 
 
+def render_verif_carte(depts):
+    """Liste repliée des magasins absents de la carte FIELD, pas vus depuis longtemps."""
+    try:
+        lst = verif_carte_candidates(list(depts))
+    except Exception:
+        lst = []
+    if not lst:
+        return
+    with st.expander(f"🗺️ À vérifier — {len(lst)} magasin(s) absent(s) de la carte FIELD, hors tournées",
+                     expanded=False):
+        st.caption(
+            f"Pas de passage depuis plus de {TOUR_VERIF_CARTE_J} jours, et la carte « Carte FIELD "
+            "MERCI HANDY » ne connaît pas (ou plus) ce magasin : fermé, ou adresse mal saisie ? "
+            "Si le magasin existe, ajoute-le sur la carte ; sinon, ouvre la fiche et "
+            "« Retirer des tournées »."
+        )
+        for i, c in enumerate(lst):
+            depuis = c.get("depuis")
+            st.markdown(
+                f'<div class="visit-card" style="padding:10px 14px;">'
+                f'{logo_img(c.get("enseigne", ""), height=14)}'
+                f'<strong style="font-size:14px;">{html.escape(str(c.get("magasin", "")))}</strong><br>'
+                f'<span style="font-size:12px;color:{TEXT_SOFT};">📍 {html.escape(str(c.get("ville", "")))}</span><br>'
+                f'<span style="font-size:11px;color:{TEXT_SOFT};">Dernier passage le '
+                f'{fr_date(c.get("last_any", ""))}' + (f" · il y a {depuis} j" if depuis is not None else "")
+                + '</span></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Fiche", key=f"verif_f_{i}", use_container_width=True):
+                open_store(c, back="tournees")
+                st.rerun()
+
+
 def render_reconquest(depts):
     """Liste repliée des magasins où l'on n'est plus référencé (hors tournées)."""
     try:
@@ -4941,6 +5190,7 @@ def screen_tournees():
         )
 
     render_reconquest(depts)
+    render_verif_carte(depts)
 
     if not days:
         st.info(
@@ -5357,6 +5607,11 @@ def append_import_rows(prepared):
         existing = set(str(v).strip() for v in sheet.col_values(1))
     except Exception:
         existing = set()
+    # Visites supprimées volontairement (onglet « Archives ») : ne pas les recréer
+    try:
+        existing |= set(str(v).strip() for v in get_workbook().worksheet(ARCHIVE_SHEET).col_values(1))
+    except Exception:
+        pass
 
     nouvelles = [p for p in prepared if p["ID"] not in existing]
     if not nouvelles:
